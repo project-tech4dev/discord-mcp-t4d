@@ -314,8 +314,37 @@ def _size(payload: dict) -> int:
     return len(pydantic_core.to_json(payload, indent=2).decode())
 
 
-def fit_budget(rows: list[dict], base: dict, max_chars: int) -> dict:
-    """Order rows most urgent first, then drop from the end until the JSON fits."""
+def _compact(row: dict, chars: int) -> dict:
+    """The same row with every message text cut to `chars` (marked text_cut)."""
+
+    def cut(item: dict | None) -> dict | None:
+        if not item or len(item.get("text", "")) <= chars:
+            return item
+        return item | {"text": item["text"][:chars], "text_cut": True}
+
+    out = dict(row)
+    if "pings" in out:
+        pings = out["pings"]
+        out["pings"] = [cut(p) for p in (pings if len(pings) <= 2 else [pings[0], pings[-1]])]
+    for key in ("latest", "your_last_reply"):
+        if key in out:
+            out[key] = cut(out[key])
+    return out
+
+
+def _minimal(row: dict, chars: int) -> dict:
+    """The row cut to its bones: the newest ping, shortened, with its link. Open the row for the rest."""
+    out = {k: v for k, v in _compact(row, chars).items() if k not in ("latest", "your_last_reply", "started")}
+    if out.get("pings"):
+        out["pings"] = [{k: v for k, v in out["pings"][-1].items() if k != "time"}]
+    if len(out.get("people", [])) > 3:
+        out["people_count"] = len(out["people"])
+        out["people"] = out["people"][:3]
+    return out
+
+
+def fit_budget(rows: list[dict], base: dict, max_chars: int, compact_chars: int | None = None) -> dict:
+    """Order rows most urgent first; if too big, shorten message text; then drop from the end until it fits."""
     rank = {s: i for i, s in enumerate(STATUS_ORDER)}
     ordered = sorted(rows, key=lambda r: r["last_activity"], reverse=True)
     ordered.sort(key=lambda r: rank[r["status"]])
@@ -333,9 +362,23 @@ def fit_budget(rows: list[dict], base: dict, max_chars: int) -> dict:
         }
 
     kept = list(ordered)
+    level = 0
+    # First drop handled and announcement rows (least urgent last in order), keeping urgent rows whole.
+    while kept and kept[-1]["status"] in ("handled", "announcement") and _size(payload(kept)) > max_chars:
+        omitted[kept.pop()["status"]] += 1
+    if compact_chars is not None and _size(payload(kept)) > max_chars:
+        # Only then shorten: level 1 cuts texts and keeps the first and last ping; level 2 keeps only
+        # the newest ping, shorter still. Open any row with get_conversation for the full text.
+        level, kept = 1, [_compact(r, compact_chars) for r in kept]
+        if _size(payload(kept)) > max_chars:
+            level, kept = 2, [_minimal(r, compact_chars // 2) for r in kept]
     while kept and _size(payload(kept)) > max_chars:
         omitted[kept.pop()["status"]] += 1
-    return payload(kept)
+    out = payload(kept)
+    if level:
+        out["compact"] = True
+        out["compact_level"] = level
+    return out
 
 
 # --- one conversation in full ---------------------------------------------------

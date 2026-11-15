@@ -25,6 +25,8 @@ TOOLS = frozenset(
         "get_conversation",
         "get_channel_overview",
         "search",
+        "get_server_overview",
+        "get_open_loops",
         "sign_in",
         "startup",
     }

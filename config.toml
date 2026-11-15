@@ -54,9 +54,15 @@ deny_channels = []
 #   { user_id = "123456789012345678", channel_id = "123456789012345678" },
 deny = []
 
+# TIME ZONE AND DATES (for deadlines in get_server_overview)
+# "today", "Friday" and "EOD" resolve in this time zone (an IANA name).
+timezone = "UTC"
+# How "20/11" is read: "dmy" (day first) or "mdy" (month first).
+date_order = "dmy"
+
 [limits]
 default_days = 7
-max_days = 14
+max_days = 30
 text_chars = 1500
 reply_chars = 200
 channel_default_days = 3
@@ -78,3 +84,16 @@ search_matches_per_topic = 5
 overview_max_messages = 3000
 overview_max_threads = 50
 overview_request_messages = 15000
+# Server-wide reads (get_my_pings, get_server_overview, get_open_loops) share one hard message
+# budget per request: each channel or thread gets an equal share (at most overview_max_messages),
+# then what quiet ones left unused goes back to the busy ones. Only the newest server_max_threads
+# threads are read; the rest set `truncated`.
+server_request_messages = 30000
+server_max_threads = 200
+# Open loops: how old your unanswered ask or your own promise (nudge_ask_days), a promise to you
+# (nudge_promise_days), or a quiet thread (nudge_stall_days) must be.
+nudge_ask_days = 1
+nudge_promise_days = 2
+nudge_stall_days = 3
+brief_topics_per_channel = 3
+brief_max_deadlines = 50
