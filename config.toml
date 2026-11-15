@@ -72,6 +72,9 @@ conversation_gap_hours = 12
 conversation_max_hours = 24
 summary_chars = 200
 max_result_chars = 40000
+# get_my_pings only. Raise it for people with very busy weeks; Claude Code then
+# needs a higher MAX_MCP_OUTPUT_TOKENS (see README).
+pings_max_chars = 40000
 conversation_max_messages = 50
 row_max_pings = 5
 overview_max_days = 30

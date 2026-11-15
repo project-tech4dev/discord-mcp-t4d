@@ -303,3 +303,22 @@ why it was made, and what was rejected.
     sets `truncated`; within a kind, open loops drop the oldest first.
 - **Deferred:** a per-person deny on a thread's own id is not checked (only
   its parent channel); one error text names the configured maximum days.
+
+## 2026-11-15 — Brief: section order, size and asks (after the first real run)
+
+- **Section order** (maintainer's call): pending items and promises,
+  deadlines this week, nudges, then last week.
+- **Pings may go past 40K:** a new `pings_max_chars` limit (default 40K) lets
+  busy people, mostly senior leadership, get every urgent row whole; Claude
+  Code then needs a higher `MAX_MCP_OUTPUT_TOKENS`. When rows must still be
+  shortened, the least urgent are shortened first and only as far as needed,
+  so `needs_you` rows keep their full text.
+- **A "?" inside a link is not a question** (found on real data: a shared
+  URL with a query string showed up as an unanswered ask).
+- **Rejected:** raising the 40K budget for every tool (the original Claude
+  Code failure was a 62K result).
+- **Review outcomes:** shortened rows carry their own `compact` level so
+  Claude knows which rows to open; a row is dropped only when every kept row
+  is already as short as it gets (the size estimate is corrected exactly);
+  "did you see <link>?" is still a question; `pings_max_chars` is capped at
+  200,000.

@@ -28,11 +28,11 @@ UNTRUSTED = (
 
 BRIEF_RECIPE = (
     "For a brief across the whole server, call get_server_overview(days=7), get_my_pings(days=14) and "
-    "get_open_loops(days=30) in parallel, then write four sections, showing each link once: "
-    "1) last week: the busiest channels and topics from the overview's channels; "
-    "2) your pending items and promises: needs_you, reopened and check rows from get_my_pings, plus "
-    "your_promise loops; 3) deadlines this week: the overview's deadlines, by due date; "
-    "4) nudges: unanswered_ask, promise_to_you and stalled loops, saying who to chase."
+    "get_open_loops(days=30) in parallel, then write four sections in this order, showing each link "
+    "once: 1) your pending items and promises: needs_you, reopened and check rows from get_my_pings, "
+    "plus your_promise loops; 2) deadlines this week: the overview's deadlines, by due date; "
+    "3) nudges: unanswered_ask, promise_to_you and stalled loops, saying who to chase; "
+    "4) last week: the busiest channels and topics from the overview's channels."
 )
 
 INSTRUCTIONS = (
@@ -130,7 +130,8 @@ def build_server(
             "urgent first. check means you replied but someone carried on after you or your reply was "
             "a promise. Reason group is an @here or role ping in a broadcast channel, counted as an "
             "announcement. "
-            "days defaults to 7 (maximum 30 unless configured otherwise). If compact is true, message texts were shortened to fit; open "
+            "days defaults to 7 (maximum 30 unless configured otherwise). If compact is true, some rows were shortened to fit, least urgent first; "
+            "each shortened row carries compact 1 (texts cut) or 2 (only the newest ping); open "
             "a row with get_conversation for the full text. channel_ids optionally limits the channels."
             + UNTRUSTED
         ),

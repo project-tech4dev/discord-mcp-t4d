@@ -153,10 +153,12 @@ its own 40K budget. Nothing is kept between calls.
   its threads), `promise_to_you` (someone promised the person and has posted
   nothing since), `stalled` (threads only: quiet for 3 days, ending on a
   question, ask or strong signal). Roles, @here and bots never owe a reply.
-- **Size:** when `get_my_pings` is over budget it first shortens texts
-  (`compact_level` 1), then keeps one short ping per row (level 2), before
-  dropping rows. On a busy 30 days the oldest `check` rows can still be cut
-  and are counted in `omitted`.
+- **Size:** `get_my_pings` has its own budget, `pings_max_chars` (default
+  40,000, at most 200,000). When over it, handled and announcement rows go
+  first; then the least urgent rows are shortened, one at a time and only as
+  far as needed: texts cut (row `compact: 1`), then only the newest ping
+  (`compact: 2`). Rows are dropped only when every kept row is as short as it
+  gets, and are counted in `omitted`. Other tools keep the 40,000 budget.
 
 Design: `docs/superpowers/specs/2026-11-15-server-wide-brief-design.md`.
 

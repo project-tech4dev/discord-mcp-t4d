@@ -202,3 +202,10 @@ async def test_pings_description_explains_compact():
         tools = {t.name: t for t in (await client.list_tools()).tools}
     assert "compact" in tools["get_my_pings"].description
     assert "maximum 30" in tools["get_my_pings"].description
+
+
+def test_brief_sections_are_pending_deadlines_nudges_then_last_week():
+    from discord_mcp.server import BRIEF_RECIPE
+
+    order = [BRIEF_RECIPE.index(s) for s in ("pending items", "deadlines this week", "nudges", "last week:")]
+    assert order == sorted(order)

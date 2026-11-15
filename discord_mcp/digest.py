@@ -430,7 +430,7 @@ class Digest:
         payload = fit_budget(
             rows,
             {"days": days, "skipped_channels": read.skipped},
-            self._limits.max_result_chars,
+            self._limits.pings_max_chars,
             compact_chars=self._limits.summary_chars,
         )
         if read.capped:
