@@ -5,6 +5,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from discord_mcp.signals import check_words
 
@@ -19,7 +20,7 @@ PING_MODES = ("all", "direct_only")
 @dataclass(frozen=True)
 class Limits:
     default_days: int = 7
-    max_days: int = 14
+    max_days: int = 30
     text_chars: int = 1500
     reply_chars: int = 200
     channel_default_days: int = 3
@@ -41,6 +42,14 @@ class Limits:
     overview_max_messages: int = 3000
     overview_max_threads: int = 50
     overview_request_messages: int = 15000
+    # Server-wide reads (get_my_pings, get_server_overview, get_open_loops): one message budget per request.
+    server_request_messages: int = 30000
+    server_max_threads: int = 200
+    nudge_ask_days: int = 1
+    nudge_promise_days: int = 2
+    nudge_stall_days: int = 3
+    brief_topics_per_channel: int = 3
+    brief_max_deadlines: int = 50
 
 
 @dataclass(frozen=True)
@@ -62,6 +71,20 @@ class Config:
     allow_all_channels: bool = False
     # Channels, categories or threads no tool ever reads, for anyone. Wins over everything.
     deny_channels: frozenset[str] = frozenset()
+    # Resolves "today", "Friday" and dates in deadlines. An IANA name such as "Europe/Berlin".
+    timezone: str = "UTC"
+    # How "20/11" is read: day first ("dmy") or month first ("mdy").
+    date_order: str = "dmy"
+
+
+def _valid_timezone(name: object) -> bool:
+    if not isinstance(name, str) or not name or ".." in name or name.startswith("/"):
+        return False
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
 
 
 def _snowflake(value: object, what: str) -> str:
@@ -85,7 +108,7 @@ def load_config(path: str | Path) -> Config:
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"cannot read config file ({type(e).__name__})") from None
 
-    unknown_top = set(raw) - {"allowlist", "deny", "limits", "allow_all_channels", "deny_channels"}
+    unknown_top = set(raw) - {"allowlist", "deny", "limits", "allow_all_channels", "deny_channels", "timezone", "date_order"}
     if unknown_top:
         # A misspelled deny list must never load as an empty one.
         raise ConfigError(f"unknown settings: {sorted(unknown_top)}")
@@ -130,10 +153,19 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError("deny_channels must be a list of { id = \"...\" } entries")
     denied = frozenset(_snowflake(d.get("id"), "deny_channels id") for d in deny_channels)
 
+    tz = raw.get("timezone", "UTC")
+    if not _valid_timezone(tz):
+        raise ConfigError("timezone must be an IANA time zone name such as Europe/Berlin or UTC")
+    date_order = raw.get("date_order", "dmy")
+    if date_order not in ("dmy", "mdy"):
+        raise ConfigError('date_order must be "dmy" or "mdy"')
+
     return Config(
         allowlist=allowlist,
         deny=deny,
         limits=Limits(**given),
         allow_all_channels=allow_all,
         deny_channels=denied,
+        timezone=tz,
+        date_order=date_order,
     )

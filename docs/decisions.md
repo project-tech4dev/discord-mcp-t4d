@@ -237,3 +237,69 @@ why it was made, and what was rejected.
 - **Still deferred:** starter-lookup failures are not audited (the topic still
   works without its starter), the duplicated grouping code, and the " › " title
   split.
+
+## 2026-11-15 — Server-wide brief: three tools Claude combines
+
+- **Decision:** a morning or Monday brief comes from three calls made in
+  parallel: `get_server_overview` (new: last week per channel, and deadlines
+  due this week), `get_my_pings` (now up to 30 days) and `get_open_loops`
+  (new: the person's promises, unanswered asks, promises to them, stalled
+  threads). The server instructions and a `brief` MCP prompt give Claude the
+  recipe. Each call reads every readable channel within a per-request message
+  budget and keeps its own 40K budget.
+- **Why:** one call over 30 days of every channel risks claude.ai timing out,
+  and one 40K budget split four ways leaves each section thin. Each tool is
+  also useful alone ("who owes me what?", "what's due this week?").
+- **Rejected:** one `get_my_brief` call (A); precomputing and storing the brief
+  (C: stores message text).
+- **Maintainer's calls:** a date counts as a deadline only with deadline
+  wording next to it ("by Friday", "due Nov 20", EOD/EOW), so "I'm out Friday"
+  doesn't; deadlines are looked for over the last 30 days; the person's own
+  promises are included, pinged or not (`your_promise`).
+- **Builder-check calls:** "stalled" applies to threads only (a main-channel
+  stretch always looks quiet once the channel moves on); only people named
+  directly (mention or reply) owe a reply, never roles, @here or bots; an
+  answer anywhere later in the same channel or its threads closes an ask, so a
+  next-day reply in a new stretch isn't missed; no cache between calls, so the
+  three calls each read Discord; broadcast (`direct_only`) channels are not
+  scanned for deadlines.
+- **Measured** on a server of about 100 channels and threads: each call
+  11-16 s, all three in parallel about 22 s; `get_server_overview(7, 30)` about 32K characters,
+  `get_open_loops(30)` about 21K. `server_request_messages = 30000`.
+- **Size:** `get_my_pings` over 30 days had about 120 rows. It now shortens
+  texts before dropping rows (`compact_level` 1, then 2: one short ping per
+  row with its link). With 14 days every urgent row fits; with 30 days
+  `needs_you` and `reopened` fit and the oldest `check` rows can be cut
+  (counted in `omitted`).
+- **Spec:** `docs/superpowers/specs/2026-11-15-server-wide-brief-design.md`
+- **Brief recipe uses `get_my_pings(days=14)`** (maintainer's call after
+  measuring): 30 days of pings came to about 120 rows and cut most `check`
+  rows to fit the budget, while 14 days keeps every urgent and check row.
+  The person's own promises still go back 30 days through `get_open_loops`.
+- **Review outcomes (code and security reviews, fixed before commit):**
+  - Deadline wording must sit right before the date ("by Friday", "due: Nov
+    20", "submit before this Friday") or be a deadline word right after it, so
+    "by the way, I'm out Friday", "posted by Ravi on Monday" and "the latest
+    news from Friday" no longer count. A weekday with "next" before it or "next
+    week" after it is not resolved. EOW posted on a weekend means the coming
+    Friday. A short weekday followed by another word ("sat down", "sun rise")
+    is not a day, unless the word is a time of day ("mon morning").
+  - Open loops merge everyone owing in a topic into `who`, so a second person
+    asked in the same stretch is not lost. A question to someone is an
+    `unanswered_ask`, never also `your_promise`.
+  - Promises in open loops use a stricter first-person rule (I'll, I will,
+    I'm on it, let me, will send/share/do/check/...) and never a question;
+    "that will work" or "see you later" no longer count. `get_my_pings`'
+    `you_promised` keeps its broader rule, since it only reads the last reply
+    in a ping conversation.
+  - `fit_budget` drops handled and announcement rows before shortening any
+    urgent row; shortening is the last resort.
+  - Server-wide reads: one hard message budget per request (no 100-message
+    floor), with unused share handed back to busy channels in a second pass,
+    and at most `server_max_threads` (200) newest threads per request.
+  - Open loops run in linear time (one pass per channel group), and result
+    fitting uses a binary search instead of re-measuring after every cut.
+  - The `brief` prompt carries the untrusted-text warning; the deadline cap
+    sets `truncated`; within a kind, open loops drop the oldest first.
+- **Deferred:** a per-person deny on a thread's own id is not checked (only
+  its parent channel); one error text names the configured maximum days.

@@ -1,3 +1,4 @@
+from datetime import timedelta
 import json
 import logging
 
@@ -79,7 +80,7 @@ async def test_window_excludes_older_messages(client):
 
 async def test_days_above_maximum_is_rejected(client):
     with pytest.raises(ValueError):
-        await make(client, config("10")).get_my_pings(IDENT, days=15)
+        await make(client, config("10")).get_my_pings(IDENT, days=31)
 
 
 async def test_bot_403_drops_channel_and_logs_only_its_id(client, caplog):
@@ -787,3 +788,73 @@ async def test_search_reports_skipped_and_ignores_old_matches(client):
     p = (await make(client, config("10")).search(IDENT, "10", ["acme"], days=30)).payload
     assert p["match_count"] == 1
     assert p["skipped_channels"] == 0
+
+
+# --- server-wide reads share one message budget ----------------------------------
+
+
+async def test_pings_accept_30_days(client):
+    result = await make(client, config("10")).get_my_pings(IDENT, days=30)
+    assert result.payload["days"] == 30
+
+
+async def test_pings_share_a_request_budget(client):
+    await make(client, config("10", "20", server_request_messages=400)).get_my_pings(IDENT)
+    assert client.max_counts["10"] == 200 and client.max_counts["20"] == 200
+
+
+async def test_pings_budget_is_a_hard_total_shared_by_channels(client):
+    # The per-channel share gives way to the request total (security review: no 100-message floor).
+    await make(client, config("10", "20", server_request_messages=50)).get_my_pings(IDENT)
+    assert client.max_counts["10"] == 25
+
+
+async def test_pings_truncated_when_a_channel_hits_its_share(client):
+    payload = (await make(client, config("10", overview_max_messages=2)).get_my_pings(IDENT, days=3)).payload
+    assert payload["truncated"] is True
+
+
+# --- server-wide reads: a hard request budget, handed back to busy channels ---------------
+
+
+def _busy_server(main_msgs: int, threads: int) -> FakeClient:
+    c = FakeClient()
+    c.add_channel(channel("1", "Team", 4), [])
+    c.add_channel(channel("10", "busy", parent_id="1"), [msg(str(10_000 + i), "10", hours_ago=1 + i * 0.01) for i in range(main_msgs)])
+    for t in range(threads):
+        tid = str(500 + t)
+        recent = ((int(NOW.timestamp() * 1000) - 1420070400000 - 3_600_000) << 22) + t  # an hour ago, newer for higher t
+        th = channel(tid, f"t{t}", 11, parent_id="10", thread_metadata={"archived": False}, last_message_id=str(recent))
+        c.add_channel(th, [msg(str(30_000 + t), tid, hours_ago=2)])
+        c.active_threads = [*c.active_threads, th]
+    return c
+
+
+async def test_unused_share_goes_back_to_a_busy_channel():
+    c = _busy_server(1000, 100)
+    d = make(c, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits(server_request_messages=3000)))
+    read = await d._read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    main = next(cm for cm in read.fetched if cm.channel["id"] == "10")
+    assert len(main.messages) == 1000
+    assert read.capped is False
+
+
+async def test_request_budget_is_a_hard_total():
+    c = _busy_server(50, 300)
+    for t in range(300):
+        tid = str(500 + t)
+        c.messages[tid] = [msg(str(40_000 + t * 100 + i), tid, hours_ago=2) for i in range(50)]
+    d = make(c, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(),
+                       limits=Limits(server_request_messages=3000, server_max_threads=1000)))
+    read = await d._read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    assert sum(len(cm.messages) for cm in read.fetched) <= 3000
+    assert read.capped is True
+
+
+async def test_thread_cap_keeps_the_newest_threads():
+    c = _busy_server(5, 10)
+    d = make(c, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits(server_max_threads=3)))
+    read = await d._read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    got = sorted(cm.channel["id"] for cm in read.fetched if cm.channel["id"] != "10")
+    assert got == ["507", "508", "509"]
+    assert read.capped is True
