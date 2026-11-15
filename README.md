@@ -13,6 +13,8 @@ built. Runs locally; deployment as a remote connector is stage 3.
 | --- | --- |
 | `discord_mcp/discord_client.py` | Discord REST client. GET only, paging, rate limits, errors carry status only |
 | `discord_mcp/matching.py` | Decides which messages ping a person, renders them |
+| `discord_mcp/topics.py` | Channel overview and search: topics (threads and main-channel stretches), compact rows, size budget |
+| `discord_mcp/signals.py` | Spots dates, deadline words, document links and watch/look_for words |
 | `discord_mcp/conversations.py` | Groups pings into conversations, marks each needs_you / reopened / handled / announcement, fits the result to a size budget |
 | `discord_mcp/permissions.py` | Discord's permission rules: owner, Administrator, @everyone, roles, member, private threads |
 | `discord_mcp/digest.py` | Runs each tool: allowlist, deny list, permissions, fetch, drop-and-log on any failure |
@@ -20,7 +22,7 @@ built. Runs locally; deployment as a remote connector is stage 3.
 | `discord_mcp/discord_oauth.py` | Discord sign-in: learns the user ID, then revokes Discord's token |
 | `discord_mcp/tokens.py` | Encrypted self-contained tokens; no token database |
 | `discord_mcp/http_app.py` | Remote connector: Streamable HTTP with sign-in |
-| `discord_mcp/server.py` | The four MCP tools (`list_my_channels`, `get_my_pings`, `get_conversation`, `get_channel_messages`), all marked read-only |
+| `discord_mcp/server.py` | The six MCP tools (`list_my_channels`, `get_my_pings`, `get_conversation`, `get_channel_overview`, `search`, `get_channel_messages`), all marked read-only |
 | `discord_mcp/audit.py` | The only log output: user ID, tool, channel IDs, count, duration, status |
 | `config.toml` | Allowlist (starts empty), deny list, limits |
 | `scripts/live_check.py` | Local check against real Discord; prints IDs and reasons, never text |

@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from discord_mcp.signals import check_words
+
 
 class ConfigError(Exception):
     pass
@@ -26,6 +28,16 @@ class Limits:
     max_result_chars: int = 40000
     conversation_max_messages: int = 50
     row_max_pings: int = 5
+    overview_max_days: int = 30
+    overview_latest: int = 2
+    overview_key_messages: int = 2
+    opening_chars: int = 300
+    main_topic_gap_hours: int = 24
+    main_topic_max_hours: int = 72
+    search_matches_per_topic: int = 5
+    overview_max_messages: int = 3000
+    overview_max_threads: int = 50
+    overview_request_messages: int = 15000
 
 
 @dataclass(frozen=True)
@@ -33,6 +45,7 @@ class ChannelEntry:
     id: str
     name: str | None
     phase: int
+    watch: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,7 +73,11 @@ def load_config(path: str | Path) -> Config:
         phase = entry.get("phase")
         if not isinstance(phase, int):
             raise ConfigError("each allowlist entry needs an integer phase")
-        allowlist[cid] = ChannelEntry(id=cid, name=entry.get("name"), phase=phase)
+        try:
+            watch = tuple(check_words(entry.get("watch", []), max_count=30, what="watch"))
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
+        allowlist[cid] = ChannelEntry(id=cid, name=entry.get("name"), phase=phase, watch=watch)
 
     deny = frozenset(
         (_snowflake(d.get("user_id"), "deny user_id"), _snowflake(d.get("channel_id"), "deny channel_id"))

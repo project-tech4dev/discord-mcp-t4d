@@ -17,7 +17,18 @@ from collections.abc import Callable, Iterable
 from typing import TextIO
 
 AUDIT_LOGGER = "discord_mcp.audit"
-TOOLS = frozenset({"list_my_channels", "get_my_pings", "get_channel_messages", "sign_in", "startup"})
+TOOLS = frozenset(
+    {
+        "list_my_channels",
+        "get_my_pings",
+        "get_channel_messages",
+        "get_conversation",
+        "get_channel_overview",
+        "search",
+        "sign_in",
+        "startup",
+    }
+)
 _STATUS = re.compile(r"^(ok|error:[A-Za-z_][A-Za-z0-9_]{0,63}|dropped:[a-z0-9_]{1,32})$")
 
 _log = logging.getLogger(AUDIT_LOGGER)

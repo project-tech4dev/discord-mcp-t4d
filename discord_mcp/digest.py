@@ -20,6 +20,8 @@ from discord_mcp.config import Config
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.conversations import fit_budget, group_conversations, render_full, render_row
 from discord_mcp.matching import CONTENT_TYPES, ChannelMessages, Identity, RenderContext, render_message
+from discord_mcp.signals import Words, check_words
+from discord_mcp.topics import Topic, build_topics, fit_overview, fit_search, overview_row, render_topic, search_results
 from discord_mcp.permissions import GuildSnapshot, can_read
 
 TEXT_TYPES = frozenset({0, 5})  # text, announcement
@@ -29,6 +31,8 @@ PRIVATE_THREAD = 12
 DISCORD_EPOCH_MS = 1420070400000
 _LINK = re.compile(r"^https://discord\.com/channels/(\d+)/(\d+)/(\d+)$")
 _CONV_ID = re.compile(r"^(\d+)/(\d+)$")
+_THREAD_TOPIC = re.compile(r"^t:(\d+)$")
+_MAIN_TOPIC = re.compile(r"^m:(\d+)/(\d+)$")
 
 
 class InputError(ValueError):
@@ -106,11 +110,19 @@ class Digest:
             status=f"dropped:{code}",
         )
 
-    def _days(self, days: int | None, default: int) -> int:
+    def _days(self, days: int | None, default: int, maximum: int | None = None) -> int:
+        top = self._limits.max_days if maximum is None else maximum
         days = default if days is None else days
-        if not isinstance(days, int) or not 1 <= days <= self._limits.max_days:
-            raise InputError(f"days must be between 1 and {self._limits.max_days}")
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= top:
+            raise InputError(f"days must be between 1 and {top}")
         return days
+
+    @staticmethod
+    def _words(words: object, max_count: int, what: str) -> list[str]:
+        try:
+            return check_words(words, max_count=max_count, what=what)
+        except ValueError as e:
+            raise InputError(str(e)) from None
 
     def _readable(
         self,
@@ -241,14 +253,20 @@ class Digest:
         return threads, set(failed), skipped
 
     async def _fetch(
-        self, identity: Identity, tool: str, targets: list[tuple[dict, str]], cutoff: datetime
+        self,
+        identity: Identity,
+        tool: str,
+        targets: list[tuple[dict, str]],
+        cutoff: datetime,
+        max_count: int | None = None,
     ) -> tuple[list[ChannelMessages], int]:
+        cap = self._limits.overview_max_messages if max_count is None else max_count
         sem = asyncio.Semaphore(self._concurrency)
 
         async def one(ch: dict, label: str) -> ChannelMessages | None:
             async with sem:
                 try:
-                    newest_first = await self._client.get_messages_since(ch["id"], cutoff)
+                    newest_first = await self._client.get_messages_since(ch["id"], cutoff, cap)
                 except DiscordError as e:
                     self._drop(identity, tool, ch["id"], e.code)
                     return None
@@ -301,10 +319,10 @@ class Digest:
         ctx = self._context(view)
         rows = [render_row(c, identity, ctx) for c in group_conversations(fetched, identity, ctx)]
         base = {"days": days, "skipped_channels": view.skipped + len(failed) + t_skipped + f_skipped}
-        return ToolResult(
-            fit_budget(rows, base, self._limits.max_result_chars),
-            [cm.channel["id"] for cm in fetched],
-        )
+        payload = fit_budget(rows, base, self._limits.max_result_chars)
+        if any(len(cm.messages) >= self._limits.overview_max_messages for cm in fetched):
+            payload["truncated"] = True  # a fetch hit its cap, so older messages were not read
+        return ToolResult(payload, [cm.channel["id"] for cm in fetched])
 
     async def get_channel_messages(
         self, identity: Identity, channel_id: str, days: int | None = None, limit: int | None = None
@@ -323,20 +341,25 @@ class Digest:
             raise AccessDenied("channel is not available")
 
         cutoff = self._clock() - timedelta(days=days)
-        fetched, _ = await self._fetch(identity, tool, targets, cutoff)
+        fetched, _ = await self._fetch(identity, tool, targets, cutoff, limit + 1)  # one extra shows "truncated"
         if not fetched:
             raise AccessDenied("channel is not available")
         cm = fetched[0]
         content = [m for m in reversed(cm.messages) if m.get("type") in CONTENT_TYPES]
         rendered = [render_message(m, cm.label, self._context(view)) for m in content[:limit]]
         return ToolResult(
-            {"messages": rendered, "truncated": len(content) > limit, "days": days},
+            # more raw messages than the limit means older content may exist even if some were system messages
+            {"messages": rendered, "truncated": len(content) > limit or len(cm.messages) > limit, "days": days},
             [channel_id],
         )
 
     async def get_conversation(self, identity: Identity, link: str) -> ToolResult:
         tool = "get_conversation"
         link = link.strip() if isinstance(link, str) else ""
+        if m := _THREAD_TOPIC.match(link):
+            return await self._open_thread(identity, tool, m.group(1))
+        if m := _MAIN_TOPIC.match(link):
+            return await self._open_main(identity, tool, m.group(1), m.group(2), anchored=True)
         if m := _LINK.match(link):
             guild_id, channel_id, message_id = m.groups()
             if guild_id != self._guild_id:
@@ -358,7 +381,8 @@ class Digest:
         elif channel_id in readable_threads:
             parent = visible[readable_threads[channel_id]["parent_id"]]
         else:
-            raise AccessDenied("channel is not available")
+            # Possibly a thread quiet for longer than the ping window; this checks access itself.
+            return await self._open_thread(identity, tool, channel_id, message_id)
 
         name = parent.get("name", parent["id"])
         targets = [(parent, name)] if parent.get("type") in TEXT_TYPES else []
@@ -369,4 +393,184 @@ class Digest:
         for conv in group_conversations(fetched, identity, ctx):
             if any(msg["id"] == message_id for msg in conv.messages):
                 return ToolResult(render_full(conv, ctx), [cm.channel["id"] for cm in fetched])
+        # Not part of a ping conversation: open the thread, or the main-channel stretch, holding it.
+        if channel_id in readable_threads:
+            return await self._open_thread(identity, tool, channel_id, message_id)
+        return await self._open_main(identity, tool, parent["id"], message_id, anchored=False)
+
+    async def _thread_access(self, identity: Identity, tool: str, thread_id: str, days: int) -> tuple[_View, dict, dict]:
+        """(view, parent, thread) for one readable thread, checked without fetching any messages."""
+        try:
+            meta = await self._client.get_channel(thread_id)
+        except DiscordError:
+            raise AccessDenied("channel is not available") from None
+        parent_id = meta.get("parent_id")
+        if meta.get("type") not in THREAD_TYPES or parent_id not in self._config.allowlist:
+            raise AccessDenied("channel is not available")
+        view = await self._view(identity, tool, [parent_id])
+        if not view.visible:
+            raise AccessDenied("channel is not available")
+        threads, _, _ = await self._threads(identity, tool, view, self._clock() - timedelta(days=days))
+        thread = next((t for t in threads if t["id"] == thread_id), None)
+        if thread is None:
+            raise AccessDenied("channel is not available")
+        return view, view.visible[0], thread
+
+    async def _starter(self, parent: dict, thread_id: str) -> dict | None:
+        """A thread's true first message: the parent message it was started from, else its oldest message."""
+        container = parent["id"] if parent.get("type") in TEXT_TYPES else thread_id
+        try:
+            try:
+                first = await self._client.get_message(container, thread_id)
+            except DiscordError as e:
+                if e.status != 404:
+                    raise
+                first = await self._client.get_oldest_message(thread_id)
+        except DiscordError:
+            return None  # the topic still works without its starter
+        return first if first and first.get("type") in CONTENT_TYPES else None
+
+    async def _open_thread(
+        self, identity: Identity, tool: str, thread_id: str, message_id: str | None = None
+    ) -> ToolResult:
+        """One thread over the overview window, fetching only that thread and its starter."""
+        days = self._limits.overview_max_days
+        view, parent, thread = await self._thread_access(identity, tool, thread_id, days)
+        label = f"{parent.get('name', parent['id'])} › {thread.get('name', thread_id)}"
+        fetched, _ = await self._fetch(identity, tool, [(thread, label)], self._clock() - timedelta(days=days))
+        if not fetched:
+            raise AccessDenied("channel is not available")
+        starter = await self._starter(parent, thread_id)
+        ctx = self._context(view)
+        topics = build_topics(None, fetched, {thread_id: starter} if starter else {}, ctx)
+        if topics and (message_id is None or any(m["id"] == message_id for m in topics[0].messages)):
+            return ToolResult(render_topic(topics[0], ctx), [thread_id])
         raise InputError(f"no conversation found for that link in the last {days} days")
+
+    async def _open_main(
+        self, identity: Identity, tool: str, channel_id: str, message_id: str, *, anchored: bool
+    ) -> ToolResult:
+        """The main-channel stretch holding a message, fetching only the main channel.
+
+        `anchored` (an m: id) rebuilds from the stretch's own first message, so it opens
+        exactly the stretch the overview row showed, whatever window the overview used.
+        """
+        days = self._limits.overview_max_days
+        if channel_id not in self._config.allowlist:
+            raise AccessDenied("channel is not available")
+        view = await self._view(identity, tool, [channel_id])
+        if not view.visible:
+            raise AccessDenied("channel is not available")
+        parent = view.visible[0]
+        not_found = InputError(f"no conversation found for that link in the last {days} days")
+        if parent.get("type") not in TEXT_TYPES:
+            raise not_found
+        window = self._clock() - timedelta(days=days)
+        threads, failed, _ = await self._threads(identity, tool, view, window)
+        if parent["id"] in failed:
+            raise AccessDenied("channel is not available")
+        fetched, _ = await self._fetch(identity, tool, [(parent, parent.get("name", parent["id"]))], window)
+        if not fetched:
+            raise AccessDenied("channel is not available")
+        main = fetched[0]
+        if anchored:
+            main = ChannelMessages(main.channel, main.label, [m for m in main.messages if int(m["id"]) >= int(message_id)])
+        # Messages that started a thread belong to that thread, as in the overview.
+        placeholders = [ChannelMessages(t, "", []) for t in threads]
+        ctx = self._context(view)
+        for t in build_topics(main, placeholders, {}, ctx):
+            if t.kind == "main" and any(m["id"] == message_id for m in t.messages):
+                return ToolResult(render_topic(t, ctx), [channel_id])
+        raise not_found
+
+    # --- channel overview and search ----------------------------------------------
+
+    async def _channel_topics(
+        self, identity: Identity, tool: str, channel_id: str, days: int
+    ) -> tuple[_View, dict, list[Topic], bool, list[str]]:
+        """Topics in one channel and its threads. Raises AccessDenied before any message is fetched."""
+        if channel_id not in self._config.allowlist:
+            raise AccessDenied("channel is not available")
+        view = await self._view(identity, tool, [channel_id])
+        if not view.visible:
+            raise AccessDenied("channel is not available")
+        parent = view.visible[0]
+        cutoff = self._clock() - timedelta(days=days)
+        threads, failed, _ = await self._threads(identity, tool, view, cutoff)
+        if parent["id"] in failed:
+            raise AccessDenied("channel is not available")
+
+        # Bound the work of one request: the newest threads only, and a shared message budget.
+        lim = self._limits
+        newest = sorted(threads, key=lambda t: int(t.get("last_message_id") or t["id"]), reverse=True)
+        dropped_threads = len(newest) > lim.overview_max_threads
+        threads = newest[: lim.overview_max_threads]
+        main_cap = lim.overview_max_messages
+        thread_cap = min(main_cap, max(100, (lim.overview_request_messages - main_cap) // max(len(threads), 1)))
+
+        name = parent.get("name", parent["id"])
+        main_fetch: list[ChannelMessages] = []
+        if parent.get("type") in TEXT_TYPES:
+            main_fetch, _ = await self._fetch(identity, tool, [(parent, name)], cutoff, main_cap)
+        thread_cms, _ = await self._fetch(
+            identity, tool, [(t, f"{name} › {t.get('name', t['id'])}") for t in threads], cutoff, thread_cap
+        )
+        fetched = main_fetch + thread_cms
+        main = main_fetch[0] if main_fetch else None
+        capped = (
+            dropped_threads
+            or (main is not None and len(main.messages) >= main_cap)
+            or any(len(cm.messages) >= thread_cap for cm in thread_cms)
+        )
+
+        # A thread that started before the window still shows its true first message.
+        main_ids = {m["id"] for m in main.messages} if main else set()
+        old_threads = [
+            cm.channel["id"]
+            for cm in thread_cms
+            if cm.channel["id"] not in main_ids and _snowflake_time(cm.channel["id"]) < cutoff
+        ]
+        sem = asyncio.Semaphore(self._concurrency)
+
+        async def starter(tid: str) -> tuple[str, dict | None]:
+            async with sem:
+                return tid, await self._starter(parent, tid)
+
+        starters = {tid: m for tid, m in await asyncio.gather(*(starter(t) for t in old_threads)) if m}
+
+        topics = build_topics(main, thread_cms, starters, self._context(view))
+        return view, parent, topics, capped, [cm.channel["id"] for cm in fetched]
+
+    async def get_channel_overview(
+        self,
+        identity: Identity,
+        channel_id: str,
+        days: int | None = None,
+        look_for: list[str] | None = None,
+        only_mine: bool = False,
+    ) -> ToolResult:
+        tool = "get_channel_overview"
+        days = self._days(days, self._limits.default_days, self._limits.overview_max_days)
+        look_for = self._words(look_for or [], 20, "look_for")
+        view, parent, topics, capped, fetched = await self._channel_topics(identity, tool, channel_id, days)
+        ctx = self._context(view)
+        extra = Words.build([*self._config.allowlist[channel_id].watch, *look_for])
+        now = self._clock()
+        rows = [overview_row(t, identity, ctx, extra, now) for t in topics]
+        if only_mine:
+            rows = [r for r in rows if r[0]["your_part"] != "none"]
+        base = {"channel": parent.get("name", parent["id"]), "days": days, "look_for": look_for, "truncated": capped}
+        return ToolResult(fit_overview(rows, base, self._limits.max_result_chars), fetched)
+
+    async def search(
+        self, identity: Identity, channel_id: str, words: list[str], days: int | None = None
+    ) -> ToolResult:
+        tool = "search"
+        days = self._days(days, 14, self._limits.overview_max_days)
+        words = self._words(words, 10, "words")
+        if not words:
+            raise InputError("words must be a list of at most 10 words, each 2 to 40 characters")
+        view, parent, topics, capped, fetched = await self._channel_topics(identity, tool, channel_id, days)
+        results, count = search_results(topics, Words.build(words), self._context(view))
+        base = {"channel": parent.get("name", parent["id"]), "days": days, "match_count": count, "truncated": capped}
+        return ToolResult(fit_search(results, base, self._limits.max_result_chars), fetched)

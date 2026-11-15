@@ -71,3 +71,33 @@ def test_removed_follow_up_limit_is_rejected(tmp_path):
     p.write_text("allowlist = []\n[limits]\nfollow_up_count = 10\n")
     with pytest.raises(ConfigError, match="unknown limits"):
         load_config(p)
+
+
+def test_watch_list_loads(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allowlist = [ { id = "10", phase = 1, watch = ["submit", "due"] } ]\n')
+    assert load_config(p).allowlist["10"].watch == ("submit", "due")
+
+
+def test_watch_defaults_to_empty(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allowlist = [ { id = "10", phase = 1 } ]\n')
+    assert load_config(p).allowlist["10"].watch == ()
+
+
+@pytest.mark.parametrize("watch", ['["x"]', "[" + ", ".join(f'"w{i:02d}"' for i in range(31)) + "]", '"submit"'])
+def test_watch_rejects_bad_words(tmp_path, watch):
+    p = tmp_path / "c.toml"
+    p.write_text(f'allowlist = [ {{ id = "10", phase = 1, watch = {watch} }} ]\n')
+    with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_overview_limits_defaults(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("allowlist = []\n")
+    lim = load_config(p).limits
+    assert (
+        lim.overview_max_days, lim.overview_latest, lim.overview_key_messages, lim.opening_chars,
+        lim.main_topic_gap_hours, lim.main_topic_max_hours, lim.search_matches_per_topic, lim.overview_max_messages,
+    ) == (30, 2, 2, 300, 24, 72, 5, 3000)

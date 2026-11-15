@@ -355,3 +355,31 @@ def test_heavy_week_keeps_every_needs_you_row_and_stays_in_budget():
     assert out["omitted"]["needs_you"] == 0
     assert sum(r["status"] == "needs_you" for r in out["conversations"]) == 20
     assert len(pydantic_core.to_json(out, indent=2).decode()) <= 40000
+
+
+def test_render_full_stays_within_budget():
+    from discord_mcp.conversations import render_full
+
+    body = [ping("100", h=20, ch="50")] + [say(str(101 + i), OTHER, 19 - i * 0.1, "50") for i in range(45)]
+    for m in body:
+        m["content"] = "z" * 1500
+    conv = group(ChannelMessages(thread("50"), "general › topic", body))[0]
+    import pydantic_core
+
+    out = render_full(conv, ctx(max_result_chars=40000))
+    assert len(pydantic_core.to_json(out, indent=2).decode()) <= 40000
+    assert out["truncated"] is True
+    assert out["messages"][0]["link"].endswith("/100")
+
+
+def test_render_full_budget_never_drops_the_ping():
+    from discord_mcp.conversations import render_full
+
+    body = [say(str(100 + i), THIRD, 30 - i * 0.1, "50") for i in range(10)]
+    body.append(ping("110", h=28, ch="50"))
+    body += [say(str(111 + i), OTHER, 27 - i * 0.1, "50") for i in range(30)]
+    for m in body:
+        m["content"] = "z" * 1500
+    conv = group(ChannelMessages(thread("50"), "general › topic", body))[0]
+    got = [m["link"].rsplit("/", 1)[1] for m in render_full(conv, ctx(max_result_chars=20000))["messages"]]
+    assert got[:2] == ["100", "110"]

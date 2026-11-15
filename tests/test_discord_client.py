@@ -162,3 +162,41 @@ async def test_thread_membership_true_false_and_error():
     with pytest.raises(DiscordError):
         await client.is_thread_member("40", "1003")
     await client.aclose()
+
+
+@respx.mock
+async def test_messages_since_stops_at_max_count():
+    route = respx.get(f"{API_BASE}/channels/10/messages")
+    route.side_effect = [httpx.Response(200, json=page(1000 - 100 * i, 100, 1 + 100 * i)) for i in range(3)]
+    client = make_client()
+    result = await client.get_messages_since("10", NOW - timedelta(days=30), max_count=150)
+    await client.aclose()
+    assert len(result) == 150
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_get_message_path():
+    route = respx.get(f"{API_BASE}/channels/10/messages/55").mock(return_value=httpx.Response(200, json=msg("55", "10")))
+    client = make_client()
+    assert (await client.get_message("10", "55"))["id"] == "55"
+    await client.aclose()
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_get_oldest_message_uses_after_zero():
+    route = respx.get(f"{API_BASE}/channels/10/messages").mock(return_value=httpx.Response(200, json=[msg("7", "10")]))
+    client = make_client()
+    assert (await client.get_oldest_message("10"))["id"] == "7"
+    await client.aclose()
+    assert route.calls[0].request.url.params["after"] == "0"
+    assert route.calls[0].request.url.params["limit"] == "1"
+
+
+@respx.mock
+async def test_get_oldest_message_empty_channel_is_none():
+    respx.get(f"{API_BASE}/channels/10/messages").mock(return_value=httpx.Response(200, json=[]))
+    client = make_client()
+    assert await client.get_oldest_message("10") is None
+    await client.aclose()

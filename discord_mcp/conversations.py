@@ -291,10 +291,10 @@ def render_full(conv: Conversation, ctx: RenderContext) -> dict:
     """Every message, oldest first. When capped, keep the first message and the newest ones."""
     n = ctx.limits.conversation_max_messages
     msgs = conv.messages
+    head = [msgs[0]] if msgs[0] is conv.pings[0][0] else [msgs[0], conv.pings[0][0]]
     if len(msgs) <= n:
         kept = msgs
     else:
-        head = [msgs[0]] if msgs[0] is conv.pings[0][0] else [msgs[0], conv.pings[0][0]]
         kept = head + [m for m in msgs[len(msgs) - max(n - len(head), 0) :] if m not in head]
     out = []
     for m in kept:
@@ -303,4 +303,18 @@ def render_full(conv: Conversation, ctx: RenderContext) -> dict:
         if ref:
             item["reply_to"] = _replace_mentions(ref.get("content", ""), ref, ctx)[: ctx.limits.reply_chars]
         out.append(item)
-    return {"where": conv.label, "id": conv.id, "messages": out, "truncated": len(kept) < len(msgs)}
+    payload = {"where": conv.label, "id": conv.id, "messages": out, "truncated": len(kept) < len(msgs)}
+    keep = {out[kept.index(m)]["link"] for m in head}
+    return trim_to_budget(payload, keep=keep, max_chars=ctx.limits.max_result_chars)
+
+
+def trim_to_budget(payload: dict, *, keep: set[str], max_chars: int) -> dict:
+    """Drop the oldest messages (never those whose link is in `keep`, never the newest) until the JSON fits."""
+    msgs = payload["messages"]
+    while _size(payload) > max_chars:
+        drop = next((i for i, m in enumerate(msgs[:-1]) if m["link"] not in keep), None)
+        if drop is None:
+            break
+        del msgs[drop]
+        payload["truncated"] = True
+    return payload

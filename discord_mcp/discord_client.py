@@ -125,8 +125,18 @@ class DiscordClient:
 
     # --- messages ---------------------------------------------------------
 
-    async def get_messages_since(self, channel_id: str, cutoff: datetime) -> list[dict]:
-        """All messages at or after `cutoff`, newest first, paging backward 100 at a time."""
+    async def get_message(self, channel_id: str, message_id: str) -> dict:
+        return await self._get(f"/channels/{channel_id}/messages/{message_id}")
+
+    async def get_oldest_message(self, channel_id: str) -> dict | None:
+        page = await self._get(f"/channels/{channel_id}/messages", {"after": "0", "limit": 1})
+        return page[0] if page else None
+
+    async def get_messages_since(self, channel_id: str, cutoff: datetime, max_count: int | None = None) -> list[dict]:
+        """Messages at or after `cutoff`, newest first, paging backward 100 at a time.
+
+        Stops after `max_count` messages, so one request cannot page a busy channel without end.
+        """
         out: list[dict] = []
         before: str | None = None
         while True:
@@ -138,6 +148,8 @@ class DiscordClient:
                 if datetime.fromisoformat(m["timestamp"]) < cutoff:
                     return out
                 out.append(m)
+                if max_count is not None and len(out) >= max_count:
+                    return out
             if len(page) < PAGE_SIZE:
                 return out
             before = page[-1]["id"]

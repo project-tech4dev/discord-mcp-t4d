@@ -15,6 +15,11 @@
 #
 # Example entry:
 #   { id = "123456789012345678", name = "general", phase = 1 },
+#
+# Optional per-channel words that mark a message as worth a look in the
+# channel overview (2-40 characters each, at most 30). Add words over time
+# when Claude misses something:
+#   { id = "123456789012345678", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] },
 allowlist = []
 
 # DENY LIST (use rarely)
@@ -38,3 +43,13 @@ summary_chars = 200
 max_result_chars = 40000
 conversation_max_messages = 50
 row_max_pings = 5
+overview_max_days = 30
+overview_latest = 2
+overview_key_messages = 2
+opening_chars = 300
+main_topic_gap_hours = 24
+main_topic_max_hours = 72
+search_matches_per_topic = 5
+overview_max_messages = 3000
+overview_max_threads = 50
+overview_request_messages = 15000

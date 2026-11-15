@@ -371,7 +371,7 @@ def test_tool_list_has_titles_and_read_only_hints(env):
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
     tools = resp.json()["result"]["tools"]
-    assert len(tools) == 4
+    assert len(tools) == 6
     for t in tools:
         assert t["title"]
         assert t["annotations"]["readOnlyHint"] is True

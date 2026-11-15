@@ -275,14 +275,259 @@ async def test_malformed_link_is_input_error(client, bad):
         await make(client, config("10")).get_conversation(IDENT, bad)
 
 
-async def test_message_not_in_any_conversation_is_input_error(client):
-    from tests.fakes import THIRD
+async def test_message_outside_30_days_is_input_error(client):
+    client.add_channel(
+        channel("10", "general", parent_id="1"), [*client.messages["10"], msg("90", "10", hours_ago=800)]
+    )
+    with pytest.raises(InputError):
+        await make(client, config("10")).get_conversation(IDENT, f"{LINK}/10/90")
 
+
+async def test_get_channel_messages_fetches_only_up_to_limit(client):
+    await make(client, config("10")).get_channel_messages(IDENT, "10", limit=5)
+    assert client.max_counts["10"] == 6  # limit plus one, to know whether more exist
+
+
+async def test_every_ping_fetch_is_capped(client):
+    d = make(client, config("10", overview_max_messages=777))
+    await d.get_my_pings(IDENT)
+    assert client.max_counts["10"] == 777
+    client.max_counts.clear()
+    await d.get_conversation(IDENT, f"{LINK}/10/100")
+    assert client.max_counts["10"] == 777
+
+
+async def test_ping_fetch_cap_hit_reports_truncated(client):
+    result = await make(client, config("10", overview_max_messages=1)).get_my_pings(IDENT)
+    assert result.payload["truncated"] is True
+
+
+# --- channel overview and search --------------------------------------------------
+
+from tests.fakes import OTHER, THIRD  # noqa: E402
+
+
+def overview_client(client):
+    t = channel("40", "acme proposal", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [
+        msg("401", "40", OTHER, "draft at https://docs.google.com/d/x", hours_ago=3),
+        msg("402", "40", THIRD, "looks good", hours_ago=2),
+    ])
+    client.active_threads = [t]
+    return client
+
+
+async def test_overview_lists_threads_and_main_topics(client):
+    result = await make(overview_client(client), config("10")).get_channel_overview(IDENT, "10", days=7)
+    p = result.payload
+    assert p["channel"] == "general"
+    assert p["counts"] == {"thread": 1, "main": 1}
+    assert [t["kind"] for t in p["topics"]] == ["thread", "main"]  # the thread has a strong signal
+    assert p["topics"][0]["id"] == "t:40"
+    assert set(result.channel_ids) == {"10", "40"}
+
+
+async def test_overview_thread_older_than_window_shows_true_starter(client):
+    old = msg("5", "10", OTHER, "kickoff: new grant", hours_ago=900, thread={"id": "5"})
+    client.add_channel(channel("10", "general", parent_id="1"), [*client.messages["10"], old])
+    t = channel("5", "old grant", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("501", "5", THIRD, "any update?", hours_ago=4)])
+    client.active_threads = [t]
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=30)).payload
+    row = next(r for r in p["topics"] if r["id"] == "t:5")
+    assert row["opening"]["link"].endswith("/10/5")
+    assert row["opening"]["text"] == "kickoff: new grant"
+    assert "message:10/5" in client.calls
+
+
+async def test_overview_thread_not_from_parent_uses_oldest(client):
+    t = channel("6", "standalone", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("601", "6", OTHER, "first post", hours_ago=900), msg("602", "6", THIRD, "later", hours_ago=4)])
+    client.active_threads = [t]
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=30)).payload
+    row = next(r for r in p["topics"] if r["id"] == "t:6")
+    assert row["opening"]["text"] == "first post"
+    assert "oldest:6" in client.calls
+
+
+async def test_overview_only_mine(client):
+    overview_client(client)
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", only_mine=True)).payload
+    assert [t["kind"] for t in p["topics"]] == ["main"]  # pinged in main; not in the thread
+    assert p["topics"][0]["your_part"] == "pinged"
+
+
+async def test_overview_watch_words_from_config_are_strong(client):
+    client.add_channel(channel("10", "general", parent_id="1"), [
+        msg("110", "10", OTHER, "start", hours_ago=10), msg("111", "10", OTHER, "LOI sent", hours_ago=9),
+        msg("112", "10", OTHER, "a", hours_ago=8), msg("113", "10", OTHER, "b", hours_ago=7),
+    ])
+    cfg = Config(allowlist={"10": ChannelEntry("10", None, 1, watch=("LOI",))}, deny=frozenset(), limits=Limits())
+    p = (await make(client, cfg).get_channel_overview(IDENT, "10")).payload
+    assert p["topics"][0]["key_messages"][0]["matched"] == ["word:LOI"]
+
+
+async def test_overview_rejects_channel_off_allowlist_without_fetch(client):
+    with pytest.raises(AccessDenied):
+        await make(client, config("10")).get_channel_overview(IDENT, "20")
+    assert "messages:20" not in client.calls
+
+
+async def test_overview_days_above_30_rejected(client):
+    with pytest.raises(InputError):
+        await make(client, config("10")).get_channel_overview(IDENT, "10", days=31)
+
+
+async def test_overview_forum_channel_threads_only(client):
+    forum = channel("70", "ideas", 15)
+    client.add_channel(forum, [])
+    t = channel("71", "idea one", 11, parent_id="70", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("711", "71", OTHER, "what about this", hours_ago=2)])
+    client.active_threads = [t]
+    p = (await make(client, config("70")).get_channel_overview(IDENT, "70")).payload
+    assert [r["id"] for r in p["topics"]] == ["t:71"]
+    assert "messages:70" not in client.calls
+
+
+async def test_overview_bad_look_for_is_input_error(client):
+    with pytest.raises(InputError):
+        await make(client, config("10")).get_channel_overview(IDENT, "10", look_for=[f"w{i:02d}" for i in range(21)])
+
+
+async def test_search_finds_thread_by_title(client):
+    overview_client(client)
+    p = (await make(client, config("10")).search(IDENT, "10", ["acme"])).payload
+    assert [r["id"] for r in p["results"]] == ["t:40"]
+    assert p["results"][0]["title_match"] is True
+    assert p["match_count"] == 0
+
+
+async def test_search_words_not_in_audit_log(client, caplog):
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    overview_client(client)
+    client.fail["40"] = 403  # forces a drop line during the search
+    await make(client, config("10")).search(IDENT, "10", ["zebrafish"])
+    assert "zebrafish" not in caplog.text
+
+
+async def test_search_requires_words(client):
+    for bad in [[], ["x"], "acme"]:
+        with pytest.raises(InputError):
+            await make(client, config("10")).search(IDENT, "10", bad)
+
+
+# --- get_conversation opens overview and search rows ------------------------------
+
+
+async def test_get_conversation_thread_id_returns_thread_with_starter(client):
+    old = msg("5", "10", OTHER, "kickoff: new grant", hours_ago=900, thread={"id": "5"})
+    client.add_channel(channel("10", "general", parent_id="1"), [*client.messages["10"], old])
+    t = channel("5", "old grant", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("501", "5", THIRD, "any update?", hours_ago=4)])
+    client.active_threads = [t]
+    p = (await make(client, config("10")).get_conversation(IDENT, "t:5")).payload
+    assert [m["text"] for m in p["messages"]] == ["kickoff: new grant", "any update?"]
+    assert p["id"] == "t:5"
+
+
+async def test_get_conversation_main_topic_id(client):
+    p = (await make(client, config("10")).get_conversation(IDENT, "m:10/100")).payload
+    assert conv_ids_payload(p) == ["100", "101"]
+    assert p["id"] == "m:10/100"
+
+
+async def test_get_conversation_link_not_in_ping_conversation_falls_back_to_main_topic(client):
     client.add_channel(
         channel("10", "general", parent_id="1"),
-        [*client.messages["10"], msg("105", "10", THIRD, "unrelated", hours_ago=2), msg("90", "10", hours_ago=400)],
+        [*client.messages["10"], msg("105", "10", THIRD, "unrelated", hours_ago=2)],
     )
+    p = (await make(client, config("10")).get_conversation(IDENT, f"{LINK}/10/105")).payload
+    assert conv_ids_payload(p) == ["105"]
+    assert p["id"] == "m:10/105"
+
+
+async def test_get_conversation_link_in_unpinged_thread_falls_back_to_thread(client):
+    overview_client(client)
+    p = (await make(client, config("10")).get_conversation(IDENT, f"{LINK}/40/402")).payload
+    assert p["id"] == "t:40"
+
+
+async def test_get_conversation_topic_id_under_hidden_channel_denied_without_fetch(client):
+    t = channel("21", "hidden thread", 11, parent_id="20", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("211", "21", mentions=[user(ME)], hours_ago=1)])
+    client.active_threads = [t]
     d = make(client, config("10"))
-    for mid in ["105", "90"]:
-        with pytest.raises(InputError):
-            await d.get_conversation(IDENT, f"{LINK}/10/{mid}")
+    for bad in ["t:21", "m:20/200"]:
+        with pytest.raises(AccessDenied):
+            await d.get_conversation(IDENT, bad)
+    assert "messages:21" not in client.calls
+    assert "messages:20" not in client.calls
+
+
+@pytest.mark.parametrize("bad", ["t:", "t:abc", "m:10", "m:10/x", "x:1", "t:5/6"])
+async def test_get_conversation_malformed_topic_ids(client, bad):
+    with pytest.raises(InputError):
+        await make(client, config("10")).get_conversation(IDENT, bad)
+
+
+def conv_ids_payload(p: dict) -> list[str]:
+    return [m["link"].rsplit("/", 1)[1] for m in p["messages"]]
+
+
+# --- final review fixes -----------------------------------------------------------
+
+
+def busy_main(client, n=150, every_h=5.0):
+    msgs = [msg(str(1000 + i), "10", OTHER, f"m{i}", hours_ago=n * every_h - i * every_h) for i in range(n)]
+    client.add_channel(channel("10", "general", parent_id="1"), msgs)
+
+
+async def test_main_topic_id_opens_exactly_the_rows_messages(client):
+    busy_main(client)  # a message every 5h for ~31 days: cut by the 72h cap only
+    d = make(client, config("10"))
+    ov = (await d.get_channel_overview(IDENT, "10", days=7)).payload
+    row = next(r for r in ov["topics"] if r["kind"] == "main")
+    opened = (await d.get_conversation(IDENT, row["id"])).payload
+    assert opened["messages"][0]["link"] == row["opening"]["link"]
+    assert opened["messages"][-1]["link"] == row["latest"][-1]["link"]
+    assert len(opened["messages"]) == row["message_count"]
+
+
+async def test_opening_a_thread_fetches_only_that_thread(client):
+    overview_client(client)
+    other = channel("41", "other", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(other, [msg("411", "41", OTHER, "x", hours_ago=1)])
+    client.active_threads.append(other)
+    await make(client, config("10")).get_conversation(IDENT, "t:40")
+    assert "messages:41" not in client.calls
+    assert "messages:10" not in client.calls
+
+
+async def test_link_into_thread_idle_20_days_opens_it(client):
+    sent = int((NOW.timestamp() - 480 * 3600) * 1000) - 1420070400000
+    t = channel("44", "quiet", 11, parent_id="10", thread_metadata={"archived": True}, last_message_id=str(sent << 22))
+    client.add_channel(t, [msg("441", "44", OTHER, "waiting on the draft", hours_ago=480)])
+    client.archived_threads["10"] = [t]
+    p = (await make(client, config("10")).get_conversation(IDENT, f"{LINK}/44/441")).payload
+    assert p["id"] == "t:44"
+
+
+async def test_get_channel_messages_truncated_when_system_messages_fill_the_cap(client):
+    msgs = [msg(str(300 + i), "10", OTHER, f"m{i}", hours_ago=50 - i * 0.1) for i in range(10)]
+    msgs += [msg(str(400 + i), "10", OTHER, "", hours_ago=1 - i * 0.01, mtype=7) for i in range(3)]
+    client.add_channel(channel("10", "general", parent_id="1"), msgs)
+    p = (await make(client, config("10")).get_channel_messages(IDENT, "10", days=3, limit=5)).payload
+    assert p["truncated"] is True
+
+
+async def test_overview_caps_threads_and_marks_truncated(client):
+    threads = []
+    for i in range(6):
+        t = channel(str(80 + i), f"t{i}", 11, parent_id="10", thread_metadata={"archived": False})
+        client.add_channel(t, [msg(str(800 + i), str(80 + i), OTHER, "hi", hours_ago=10 - i)])
+        threads.append(t)
+    client.active_threads = threads
+    p = (await make(client, config("10", overview_max_threads=4)).get_channel_overview(IDENT, "10")).payload
+    assert p["counts"]["thread"] == 4
+    assert p["truncated"] is True
+    assert "messages:80" not in client.calls  # the oldest threads are not fetched

@@ -80,8 +80,29 @@ Design: `docs/superpowers/specs/2026-11-15-ping-conversations-design.md`.
 | --- | --- |
 | `list_my_channels` | Allowlisted channels the person can see |
 | `get_my_pings` | Conversations that ping the person from the last N days (default 7, max 14), most urgent first |
-| `get_conversation` | One conversation in full, from any message link in it or its id |
+| `get_conversation` | One conversation or topic in full, from any message link in it or its id (`t:`/`m:` for overview rows) |
+| `get_channel_overview` | One compact row per topic (thread or main-channel stretch) in one channel, up to 30 days |
+| `search` | Topics in one channel matching words, grouped by topic, up to 30 days |
 | `get_channel_messages` | Recent messages from one visible channel |
+
+## Channel overview and search
+
+For briefings and questions about a whole channel ("which grants still need
+action"), not only what pinged the person. A topic is a thread (with its true
+first message, even when older than the window) or a stretch of main-channel
+messages split at a 24-hour quiet gap and capped at 72 hours. Each row carries
+the opening message, the latest 2, up to 2 key messages, `quiet_days` and
+`your_part`; `only_mine` keeps the person's own topics.
+
+The server spots signals mechanically and never decides "needs action":
+strong signals (explicit dates, deadline/due/EOD/EOW, document links, the
+channel's `watch` words from config, and `look_for` words from Claude) and weak
+ones (weekday names, tomorrow, next week). Words are matched literally at the
+start of a word. Nothing is learned or stored; "learning" means people add
+`watch` words or tell their Claude what to look for. Rows with strong signals
+are kept first under the size budget; about 25 typical threads fit in full.
+Every fetch is capped at 3000 messages per channel or thread.
+Design: `docs/superpowers/specs/2026-11-15-channel-overview-and-search-design.md`.
 
 ## Status
 

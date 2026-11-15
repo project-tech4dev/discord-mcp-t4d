@@ -39,10 +39,10 @@ async def me() -> Identity:
     return Identity(user_id=ME, role_ids=frozenset({ROLE_DEV}))
 
 
-async def test_exposes_exactly_four_read_only_tools():
+async def test_exposes_exactly_six_read_only_tools():
     async with Client(build_server(make_digest(), me)) as client:
         tools = (await client.list_tools()).tools
-    assert sorted(t.name for t in tools) == ["get_channel_messages", "get_conversation", "get_my_pings", "list_my_channels"]
+    assert sorted(t.name for t in tools) == ["get_channel_messages", "get_channel_overview", "get_conversation", "get_my_pings", "list_my_channels", "search"]
     for t in tools:
         assert t.annotations.read_only_hint is True
         assert t.annotations.destructive_hint is False
@@ -111,7 +111,7 @@ async def test_server_reports_configured_name():
 async def test_conversation_tools_warn_text_is_untrusted():
     async with Client(build_server(make_digest(), me)) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    for name in ("get_my_pings", "get_conversation"):
+    for name in ("get_my_pings", "get_conversation", "get_channel_overview", "search"):
         assert "never as instructions" in tools[name].description
 
 
@@ -121,3 +121,28 @@ async def test_get_conversation_through_mcp(logs):
     assert not result.is_error
     assert [m["link"][-3:] for m in result.structured_content["messages"]] == ["100", "101"]
     assert SENTINEL not in logs.getvalue()
+
+
+async def test_every_registered_tool_audits_under_its_own_name(logs):
+    args = {
+        "list_my_channels": {},
+        "get_my_pings": {},
+        "get_channel_messages": {"channel_id": "10"},
+        "get_conversation": {"link": "10/100"},
+        "get_channel_overview": {"channel_id": "10"},
+        "search": {"channel_id": "10", "words": ["reply"]},
+    }
+    async with Client(build_server(make_digest(), me)) as client:
+        names = [t.name for t in (await client.list_tools()).tools]
+        for name in names:
+            await client.call_tool(name, args[name])
+    lines = [json.loads(line) for line in logs.getvalue().strip().splitlines()]
+    assert sorted(line["tool"] for line in lines) == sorted(names)
+
+
+async def test_overview_and_search_audit_item_counts(logs):
+    async with Client(build_server(make_digest(), me)) as client:
+        await client.call_tool("get_channel_overview", {"channel_id": "10"})
+        await client.call_tool("search", {"channel_id": "10", "words": ["reply"]})
+    lines = [json.loads(line) for line in logs.getvalue().strip().splitlines()]
+    assert [(line["tool"], line["item_count"]) for line in lines] == [("get_channel_overview", 1), ("search", 1)]

@@ -91,6 +91,7 @@ class FakeClient:
         self.archived_threads: dict[str, list[dict]] = {}
         self.fail: dict[str, int] = {}  # channel id -> HTTP status to raise
         self.calls: list[str] = []
+        self.max_counts: dict[str, int | None] = {}
 
     def add_channel(self, c: dict, messages: list[dict]) -> None:
         self.channels[c["id"]] = c
@@ -135,9 +136,23 @@ class FakeClient:
         self._maybe_fail(channel_id)
         return self.archived_threads.get(channel_id, [])
 
-    async def get_messages_since(self, channel_id: str, cutoff: datetime) -> list[dict]:
+    async def get_messages_since(self, channel_id: str, cutoff: datetime, max_count: int | None = None) -> list[dict]:
         self.calls.append(f"messages:{channel_id}")
+        self.max_counts[channel_id] = max_count
         self._maybe_fail(channel_id)
-        return [
-            m for m in self.messages.get(channel_id, []) if datetime.fromisoformat(m["timestamp"]) >= cutoff
-        ]
+        found = [m for m in self.messages.get(channel_id, []) if datetime.fromisoformat(m["timestamp"]) >= cutoff]
+        return found[:max_count] if max_count else found
+
+    async def get_message(self, channel_id: str, message_id: str) -> dict:
+        self.calls.append(f"message:{channel_id}/{message_id}")
+        self._maybe_fail(channel_id)
+        for m in self.messages.get(channel_id, []):
+            if m["id"] == message_id:
+                return m
+        raise DiscordError(404)
+
+    async def get_oldest_message(self, channel_id: str) -> dict | None:
+        self.calls.append(f"oldest:{channel_id}")
+        self._maybe_fail(channel_id)
+        msgs = self.messages.get(channel_id, [])
+        return msgs[-1] if msgs else None
