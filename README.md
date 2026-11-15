@@ -115,8 +115,9 @@ deny = []
   deny private spaces (leadership, HR) first.
 - `deny_channels` takes channel, category or thread IDs and always wins.
 - `watch` adds words that mark a message as worth a look in the overview.
-- `pings = "direct_only"` is for broadcast channels (leave notices, social):
-  @here and role pings there count as announcements, not "needs you".
+- `pings = "direct_only"` is for broadcast channels (leave notices, social,
+  job posts): @here and role pings there count as announcements, not "needs
+  you". The channel is still read for the overview, search and open loops.
 - Config is read at start-up: restart the server after changing it.
 
 ### B. Claude Code over stdio (no sign-in)

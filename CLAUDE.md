@@ -1,7 +1,8 @@
 # discord-mcp
 
 Read-only MCP server that gives each person their Discord pings and
-conversations from allowlisted channels they can see. Design: `docs/design.md`.
+conversations from permitted channels they can see (an allowlist, or every
+channel minus a deny list). Design: `docs/design.md`.
 
 ## Before every commit
 
