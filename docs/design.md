@@ -98,11 +98,13 @@ Design: `docs/superpowers/specs/2026-11-15-ping-conversations-design.md`.
 | Tool | Returns |
 | --- | --- |
 | `list_my_channels` | Allowlisted channels the person can see |
-| `get_my_pings` | Conversations that ping the person from the last N days (default 7, max 14), most urgent first |
+| `get_my_pings` | Conversations that ping the person from the last N days (default 7, max 30), most urgent first |
 | `get_conversation` | One conversation or topic in full, from any message link in it or its id (`t:`/`m:` for overview rows) |
 | `get_channel_overview` | One compact row per topic (thread or main-channel stretch) in one channel, up to 30 days |
 | `search` | Topics in one channel matching words, grouped by topic, up to 30 days |
 | `get_channel_messages` | Recent messages from one visible channel |
+| `get_server_overview` | Last week's discussion per channel, and deadlines due this week, across every readable channel |
+| `get_open_loops` | The person's open promises, and asks, promises and threads where someone else owes the next move |
 
 ## Channel overview and search
 
@@ -123,6 +125,40 @@ start of a word. Nothing is learned or stored; "learning" means people add
 are kept first under the size budget; about 25 typical threads fit in full.
 Every fetch is capped at 3000 messages per channel or thread.
 Design: `docs/superpowers/specs/2026-11-15-channel-overview-and-search-design.md`.
+
+## Server-wide brief
+
+A morning or Monday brief comes from three calls Claude makes in parallel
+(the recipe is in the server instructions and in the `brief` MCP prompt):
+`get_server_overview(days=7)` for last week and deadlines,
+`get_my_pings(days=14)` for pending items, and `get_open_loops(days=30)` for
+promises and nudges. Each call reads every readable channel and thread once,
+within a per-request message budget (`server_request_messages`), and keeps
+its own 40K budget. Nothing is kept between calls.
+
+- **Last week:** one entry per active channel (message, topic and people
+  counts) with its top 3 topics, strong signals first. Quiet channels are
+  counted, never listed.
+- **Deadlines:** a date counts only with deadline wording next to it ("by
+  Friday", "due Nov 20", "20/11 deadline") or as EOD/EOW. Dates resolve from
+  the day the message was posted, in the configured `timezone`; numeric dates
+  follow `date_order`; dates in links are ignored; "next week" is too vague.
+  Deadlines due from today to `upcoming_days` ahead are listed from messages
+  of the last `deadline_days` (default 30). Broadcast (`direct_only`) channels
+  are not scanned.
+- **Open loops:** `your_promise` (a promise of the person's with no later
+  message from them in that thread or stretch, and no reply to it),
+  `unanswered_ask` (the person asked someone named directly, by mention or
+  reply, and that person has posted nothing since anywhere in the channel or
+  its threads), `promise_to_you` (someone promised the person and has posted
+  nothing since), `stalled` (threads only: quiet for 3 days, ending on a
+  question, ask or strong signal). Roles, @here and bots never owe a reply.
+- **Size:** when `get_my_pings` is over budget it first shortens texts
+  (`compact_level` 1), then keeps one short ping per row (level 2), before
+  dropping rows. On a busy 30 days the oldest `check` rows can still be cut
+  and are counted in `omitted`.
+
+Design: `docs/superpowers/specs/2026-11-15-server-wide-brief-design.md`.
 
 ## Status
 

@@ -580,3 +580,66 @@ def test_cut_check_rows_are_counted_in_omitted():
     out = fit_budget(rows, {}, 4000)
     assert out["omitted"]["check"] >= 1
     assert out["omitted"]["check"] + len(out["conversations"]) == 8
+
+
+def _long_row(status, when):
+    ping = {"author": "a", "time": "t", "text": "z" * 1500, "link": f"https://x/{when}", "reason": "mention"}
+    return {"status": status, "last_activity": f"2026-11-{when:02d}T00:00", "pings": [ping, dict(ping)]}
+
+
+def test_budget_shortens_ping_text_before_dropping_rows():
+    rows = [_long_row("needs_you", d) for d in range(1, 9)]
+    full = fit_budget(rows, {}, 10**6, compact_chars=200)
+    assert "compact" not in full
+    out = fit_budget(rows, {}, 14000, compact_chars=200)
+    assert out["omitted"]["needs_you"] == 0
+    assert out["compact"] is True
+    ping = out["conversations"][0]["pings"][0]
+    assert len(ping["text"]) == 200 and ping["text_cut"] is True
+    assert len(rows[0]["pings"][0]["text"]) == 1500  # the caller's rows are not changed
+
+
+def test_budget_still_drops_rows_when_compact_is_not_enough():
+    rows = [_long_row("needs_you", d) for d in range(1, 30)]
+    out = fit_budget(rows, {}, 6000, compact_chars=200)
+    assert out["omitted"]["needs_you"] > 0 and out["truncated"] is True
+
+
+def test_compact_rows_keep_only_the_first_and_last_ping():
+    row = _long_row("needs_you", 1)
+    row["pings"] = [dict(row["pings"][0], link=f"https://x/{i}") for i in range(5)]
+    out = fit_budget([row], {}, 2000, compact_chars=200)
+    assert [p["link"] for p in out["conversations"][0]["pings"]] == ["https://x/0", "https://x/4"]
+
+
+def test_minimal_compact_level_keeps_every_urgent_row():
+    rows = []
+    for d in range(1, 28):
+        r = _long_row("needs_you" if d % 2 else "check", d)
+        r["latest"] = {"author": "b", "time": "t", "text": "w" * 1500, "link": f"https://y/{d}"}
+        rows.append(r)
+    out = fit_budget(rows, {}, 14000, compact_chars=200)
+    assert out["omitted"]["needs_you"] == 0 and out["omitted"]["check"] == 0
+    assert out["compact_level"] == 2
+    row = out["conversations"][0]
+    assert len(row["pings"]) == 1 and len(row["pings"][0]["text"]) <= 100
+    assert row["pings"][0]["link"].startswith("https://x/")
+    assert "latest" not in row and "your_last_reply" not in row and "time" not in row["pings"][0]
+
+
+def test_minimal_rows_keep_three_names_and_a_count():
+    row = _long_row("needs_you", 1) | {"people": [f"p{i}" for i in range(8)]}
+    out = fit_budget([row] * 6, {}, 3000, compact_chars=200)
+    assert out["compact_level"] == 2
+    assert out["conversations"][0]["people"] == ["p0", "p1", "p2"]
+    assert out["conversations"][0]["people_count"] == 8
+
+
+def test_budget_drops_low_priority_rows_before_shortening_urgent_ones():
+    urgent = [_long_row("needs_you", d) for d in range(1, 6)]
+    noise = [_long_row("announcement", d) for d in range(1, 29)] + [_long_row("handled", d) for d in range(1, 10)]
+    out = fit_budget(urgent + noise, {}, 20000, compact_chars=200)
+    assert "compact" not in out
+    kept = [r for r in out["conversations"] if r["status"] == "needs_you"]
+    assert len(kept) == 5 and all(len(p["text"]) == 1500 for r in kept for p in r["pings"])
+    assert out["omitted"]["announcement"] > 0

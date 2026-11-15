@@ -17,6 +17,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from discord_mcp import audit
 from discord_mcp.config import Config
@@ -24,6 +25,14 @@ from discord_mcp.discord_client import DiscordError
 from discord_mcp.conversations import fit_budget, group_conversations, render_full, render_row
 from discord_mcp.matching import CONTENT_TYPES, ChannelMessages, Identity, RenderContext, render_message
 from discord_mcp.signals import Words, check_words
+from discord_mcp.brief import (
+    channel_entry,
+    deadline_items,
+    fit_loops,
+    fit_server_overview,
+    group_by_channel,
+    open_loops,
+)
 from discord_mcp.topics import Topic, build_topics, fit_overview, fit_search, overview_row, render_topic, search_results
 from discord_mcp.permissions import GuildSnapshot, can_read
 
@@ -67,6 +76,18 @@ class _View:
     readable_names: dict[str, str]  # names of channels this person can read, for <#id> mentions
     visible: list[dict]  # permitted channels the person can read
     skipped: int
+
+
+@dataclass
+class _ServerRead:
+    """Every readable channel and thread over a window, read once for one request."""
+
+    view: _View
+    ctx: RenderContext
+    fetched: list[ChannelMessages]  # main channels and threads, oldest message first
+    skipped: int  # channels or threads that could not be read (quiet skips not counted)
+    capped: bool  # a channel hit its share of the message budget, so older messages were not read
+    unread: set[str]  # channels or threads that could not be read (counted in skipped)
 
 
 def _snowflake_time(snowflake: str) -> datetime:
@@ -113,6 +134,13 @@ class Digest:
             duration_ms=0,
             status=f"dropped:{code}",
         )
+
+    @staticmethod
+    def _window(value: object, default: int, top: int, name: str) -> int:
+        value = default if value is None else value
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= top:
+            raise InputError(f"{name} must be between 1 and {top}")
+        return value
 
     def _days(self, days: int | None, default: int, maximum: int | None = None) -> int:
         top = self._limits.max_days if maximum is None else maximum
@@ -350,28 +378,64 @@ class Digest:
         ]
         return ToolResult({"channels": out, "skipped_channels": view.skipped}, [c["id"] for c in view.visible])
 
-    async def get_my_pings(
-        self, identity: Identity, days: int | None = None, channel_ids: list[str] | None = None
-    ) -> ToolResult:
-        tool = "get_my_pings"
-        days = self._days(days, self._limits.default_days)
-        cutoff = self._clock() - timedelta(days=days)
-
+    async def _read_server(
+        self, identity: Identity, tool: str, cutoff: datetime, channel_ids: list[str] | None = None
+    ) -> _ServerRead:
+        """Read every permitted, readable channel and thread since `cutoff`, within one message budget."""
         view = await self._view(identity, tool, channel_ids)
         threads, failed, t_skipped = await self._threads(identity, tool, view, cutoff)
+        lim = self._limits
+        # Bound the work: the newest threads only; the rest show up as `truncated`.
+        newest = sorted(threads, key=lambda t: int(t.get("last_message_id") or t["id"]), reverse=True)
+        dropped_threads = len(newest) > lim.server_max_threads
+        threads = newest[: lim.server_max_threads]
         channels = [c for c in view.visible if c["id"] not in failed]
         names = {c["id"]: c.get("name", c["id"]) for c in channels}
         targets = [(c, c.get("name", c["id"])) for c in channels if c.get("type") in TEXT_TYPES]
         targets += [(t, f"{names.get(t.get('parent_id'), '?')} › {t.get('name', t['id'])}") for t in threads]
 
-        fetched, f_skipped = await self._fetch(identity, tool, targets, cutoff)
-        ctx = self._context(view)
-        rows = [render_row(c, identity, ctx) for c in group_conversations(fetched, identity, ctx)]
-        base = {"days": days, "skipped_channels": view.skipped + len(failed) + t_skipped + f_skipped}
-        payload = fit_budget(rows, base, self._limits.max_result_chars)
-        if any(len(cm.messages) >= self._limits.overview_max_messages for cm in fetched):
+        # One hard message budget for the request: an equal share first, then what quiet channels
+        # left unused goes back to the ones that filled their share.
+        total = lim.server_request_messages
+        cap = min(lim.overview_max_messages, max(1, total // max(len(targets), 1)))
+        fetched, f_skipped = await self._fetch(identity, tool, targets, cutoff, cap)
+        caps = {cm.channel["id"]: cap for cm in fetched}
+        full = [cm for cm in fetched if len(cm.messages) >= cap]
+        spare = total - sum(len(cm.messages) for cm in fetched)
+        if full and spare > 0 and cap < lim.overview_max_messages:
+            bigger = min(lim.overview_max_messages, cap + spare // len(full))
+            if bigger > cap:
+                again, _ = await self._fetch(identity, tool, [(cm.channel, cm.label) for cm in full], cutoff, bigger)
+                more = {cm.channel["id"]: cm for cm in again}
+                fetched = [more.get(cm.channel["id"], cm) for cm in fetched]
+                caps.update({cid: bigger for cid in more})
+        got = {cm.channel["id"] for cm in fetched}
+        return _ServerRead(
+            view=view,
+            ctx=self._context(view),
+            fetched=fetched,
+            skipped=view.skipped + len(failed) + t_skipped + f_skipped,
+            capped=dropped_threads or any(len(cm.messages) >= caps[cm.channel["id"]] for cm in fetched),
+            unread=set(failed) | {ch["id"] for ch, _ in targets if ch["id"] not in got},
+        )
+
+    async def get_my_pings(
+        self, identity: Identity, days: int | None = None, channel_ids: list[str] | None = None
+    ) -> ToolResult:
+        tool = "get_my_pings"
+        days = self._days(days, self._limits.default_days)
+        read = await self._read_server(identity, tool, self._clock() - timedelta(days=days), channel_ids)
+        ctx = read.ctx
+        rows = [render_row(c, identity, ctx) for c in group_conversations(read.fetched, identity, ctx)]
+        payload = fit_budget(
+            rows,
+            {"days": days, "skipped_channels": read.skipped},
+            self._limits.max_result_chars,
+            compact_chars=self._limits.summary_chars,
+        )
+        if read.capped:
             payload["truncated"] = True  # a fetch hit its cap, so older messages were not read
-        return ToolResult(payload, [cm.channel["id"] for cm in fetched])
+        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched])
 
     async def get_channel_messages(
         self, identity: Identity, channel_id: str, days: int | None = None, limit: int | None = None
@@ -656,3 +720,70 @@ class Digest:
             "truncated": capped,
         }
         return ToolResult(fit_search(results, base, self._limits.max_result_chars), fetched)
+
+    # --- server-wide brief ------------------------------------------------------
+
+    def _groups(self, read: _ServerRead):
+        names = {c["id"]: c.get("name", c["id"]) for c in read.view.visible}
+
+        def watch(cid: str) -> Words:
+            entry = self._config.allowlist.get(cid)
+            return Words.build(list(entry.watch) if entry else [])
+
+        return group_by_channel(read.fetched, names, read.ctx, watch)
+
+    async def get_server_overview(
+        self,
+        identity: Identity,
+        days: int | None = None,
+        deadline_days: int | None = None,
+        upcoming_days: int | None = None,
+    ) -> ToolResult:
+        """Last week's discussion across every readable channel, and deadlines coming up."""
+        tool = "get_server_overview"
+        top = self._limits.overview_max_days
+        days = self._window(days, 7, top, "days")
+        deadline_days = self._window(deadline_days, top, top, "deadline_days")
+        upcoming_days = self._window(upcoming_days, 7, 14, "upcoming_days")
+        now = self._clock()
+        tz = ZoneInfo(self._config.timezone)
+        read = await self._read_server(identity, tool, now - timedelta(days=max(days, deadline_days)))
+        groups = self._groups(read)
+
+        since = now - timedelta(days=days)
+        pairs = [(g, channel_entry(g, since, read.ctx)) for g in groups]
+        entries = [e for _, e in pairs if e is not None]
+        active = {g.channel["id"] for g, e in pairs if e is not None}
+        quiet = [c for c in read.view.visible if c["id"] not in active and c["id"] not in read.unread]
+
+        today = now.astimezone(tz).date()
+        deadlines = deadline_items(
+            groups, now - timedelta(days=deadline_days), today, today + timedelta(days=upcoming_days),
+            tz, self._config.date_order, read.ctx,
+        )
+        cap = self._limits.brief_max_deadlines
+        base = {
+            "days": days,
+            "deadline_days": deadline_days,
+            "upcoming_days": upcoming_days,
+            "today": today.isoformat(),
+            "quiet_channels": len(quiet),
+            "skipped_channels": read.skipped,
+            "omitted_deadlines": max(len(deadlines) - cap, 0),
+            "truncated": read.capped,
+        }
+        payload = fit_server_overview(
+            entries, deadlines[:cap], base, self._limits.max_result_chars, self._limits.brief_topics_per_channel
+        )
+        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched])
+
+    async def get_open_loops(self, identity: Identity, days: int | None = None) -> ToolResult:
+        """Your promises not yet followed up, and what others owe you, across every readable channel."""
+        tool = "get_open_loops"
+        top = self._limits.overview_max_days
+        days = self._window(days, top, top, "days")
+        now = self._clock()
+        read = await self._read_server(identity, tool, now - timedelta(days=days))
+        found = open_loops(self._groups(read), identity, read.ctx, now)
+        base = {"days": days, "skipped_channels": read.skipped, "truncated": read.capped}
+        return ToolResult(fit_loops(found, base, self._limits.max_result_chars), [cm.channel["id"] for cm in read.fetched])

@@ -35,7 +35,7 @@ summary_chars = 150
     assert cfg.allowlist["10"].phase == 1
     assert cfg.deny == frozenset({("1001", "11")})
     assert cfg.limits.summary_chars == 150
-    assert cfg.limits.max_days == 14  # untouched default
+    assert cfg.limits.max_days == 30  # untouched default
 
 
 def test_rejects_non_numeric_channel_id(tmp_path):
@@ -183,4 +183,39 @@ def test_malformed_entries_are_config_errors(tmp_path, toml):
     p = tmp_path / "c.toml"
     p.write_text(toml)
     with pytest.raises(ConfigError):
+        load_config(p)
+
+
+# --- time zone, date order, brief limits ----------------------------------------
+
+
+def test_defaults_are_utc_and_dmy(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("allowlist = []\n")
+    cfg = load_config(p)
+    assert (cfg.timezone, cfg.date_order) == ("UTC", "dmy")
+    assert (cfg.limits.nudge_ask_days, cfg.limits.nudge_promise_days, cfg.limits.nudge_stall_days) == (1, 2, 3)
+    assert cfg.limits.brief_topics_per_channel == 3 and cfg.limits.brief_max_deadlines == 50
+
+
+def test_timezone_and_date_order_load(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('timezone = "Europe/Berlin"\ndate_order = "mdy"\nallowlist = []\n')
+    cfg = load_config(p)
+    assert (cfg.timezone, cfg.date_order) == ("Europe/Berlin", "mdy")
+
+
+@pytest.mark.parametrize("value", ['"Mars/Olympus"', '"../../etc/passwd"', "5", '""'])
+def test_bad_timezone_is_rejected(tmp_path, value):
+    p = tmp_path / "c.toml"
+    p.write_text(f"timezone = {value}\n")
+    with pytest.raises(ConfigError, match="^timezone must be an IANA time zone name") as e:
+        load_config(p)
+    assert "Mars" not in str(e.value) and "passwd" not in str(e.value)
+
+
+def test_bad_date_order_is_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('date_order = "ymd"\n')
+    with pytest.raises(ConfigError, match="date_order must be"):
         load_config(p)
