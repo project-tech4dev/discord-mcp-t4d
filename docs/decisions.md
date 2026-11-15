@@ -191,3 +191,25 @@ why it was made, and what was rejected.
   edge); deploying early only to test.
 - **Caveat:** the open tunnel exposes the server before per-person rate limits
   exist (stage 3), so it stays open only while testing.
+
+## 2026-11-15 — A `check` status for loose ends
+
+- **Problem:** a conversation counted as handled as soon as the person
+  replied, hiding two loose ends: someone carried on after the reply without
+  pinging again, or the reply was a promise ("will send the draft") rather than
+  an answer. Handled rows showed nothing after the reply.
+- **Decision:** a handled conversation becomes `check` when someone other
+  than the person posted after their last reply (`others_after_you`), or their
+  last reply contains a promise phrase (`you_promised`: will, I'll, let me,
+  later, tomorrow, next week, EOD, EOW, soon, shortly, I'm on it, get back).
+  "let me know" and "commented on it" don't count (review finding: they close
+  answers). Known gaps: "ill" without an apostrophe, "we'll", "gonna". Check
+  rows show the reasons and the newest message after the reply, and sort
+  between reopened and handled, so they outlast handled rows in the size cut.
+- **Maintainer's calls:** the person's own promises count. Bots posting after
+  the reply don't (leave calendars and similar would be noise).
+- **Rejected:** only adding the newest message to handled rows (nothing
+  sorted up front, and those rows are cut first); a model on the server
+  judging each reply (puts a model and message-text processing in the
+  server). False alarms such as "thanks!" are left to Claude.
+- **Spec:** `docs/superpowers/specs/2026-11-15-check-status-design.md`

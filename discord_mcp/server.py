@@ -28,9 +28,11 @@ UNTRUSTED = (
 
 INSTRUCTIONS = (
     "Returns the signed-in person's Discord conversations from permitted channels they can see. "
-    "get_my_pings groups pings into conversations marked needs_you, reopened, handled or announcement. "
-    "Report needs_you and reopened first. For handled ones, read your_last_reply to judge whether it "
-    "really closed the matter. If latest shows someone else answered, say so. Call get_conversation "
+    "get_my_pings groups pings into conversations marked needs_you, reopened, check, handled or "
+    "announcement. Report needs_you and reopened first, then check: the person replied, but someone "
+    "carried on afterwards (others_after_you) or the reply was a promise (you_promised); read latest "
+    "and your_last_reply and say whether it is really closed. For handled ones, read your_last_reply "
+    "to judge whether it closed the matter. If latest shows someone else answered, say so. Call get_conversation "
     "with a link when you need the full thread. For briefings or 'what is pending in a channel', "
     "use get_channel_overview: look for unanswered asks in latest, and for drafts and deadlines in "
     "key_messages, comparing dates to today and to quiet_days; pass look_for words that fit the "
@@ -110,8 +112,10 @@ def build_server(
         title="Get my Discord pings",
         description=(
             "Your Discord conversations that ping you (by name, a role you hold, @here, @everyone, or a "
-            "reply to you), grouped and marked needs_you, reopened, handled or announcement, most urgent "
-            "first. Reason group is an @here or role ping in a broadcast channel, counted as an announcement. "
+            "reply to you), grouped and marked needs_you, reopened, check, handled or announcement, most "
+            "urgent first. check means you replied but someone carried on after you or your reply was "
+            "a promise. Reason group is an @here or role ping in a broadcast channel, counted as an "
+            "announcement. "
             "days defaults to 7 (maximum 14). channel_ids optionally limits the channels." + UNTRUSTED
         ),
         annotations=READ_ONLY,

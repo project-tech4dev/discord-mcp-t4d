@@ -9,6 +9,7 @@ Pure functions over already-fetched messages; nothing is kept.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -28,7 +29,17 @@ THREAD_TYPES = frozenset({10, 11, 12})
 # Ping reasons not asked of the person directly: @everyone anywhere, and @here or a role
 # ping ("group") in a direct_only channel.
 BROADCASTS = frozenset({"everyone", "group"})
-STATUS_ORDER = ("needs_you", "reopened", "handled", "announcement")
+STATUS_ORDER = ("needs_you", "reopened", "check", "handled", "announcement")
+
+# A reply that promises rather than answers. Whole words, any apostrophe style.
+# "let me know" closes an answer, so it is not a promise; "on it" counts only at the start
+# of the reply or as "I'm on it" ("commented on it" is not a promise).
+_APOS = "['\u2018\u2019\u02bc`]"
+PROMISE = re.compile(
+    rf"\b(?:will|i{_APOS}ll|let me(?! know)|later|tomorrow|next week|eod|eow|soon|shortly"
+    rf"|i{_APOS}?m on it|get back)\b|^\s*on it\b",
+    re.IGNORECASE,
+)
 
 Ping = tuple[dict, str, "str | None"]
 
@@ -197,7 +208,31 @@ def status_of(conv: Conversation, identity: Identity) -> str:
     if not mine:
         return "needs_you"
     last_mine = _id(mine[-1])
-    return "reopened" if any(_id(p[0]) > last_mine for p in direct) else "handled"
+    if any(_id(p[0]) > last_mine for p in direct):
+        return "reopened"
+    return "check" if check_reasons(conv, identity) else "handled"
+
+
+def _others_after(conv: Conversation, identity: Identity, after: dict) -> list[dict]:
+    """Messages from other people (not bots) after `after`."""
+    return [
+        m
+        for m in conv.messages
+        if _id(m) > _id(after) and _author(m) != identity.user_id and not (m.get("author") or {}).get("bot")
+    ]
+
+
+def check_reasons(conv: Conversation, identity: Identity) -> list[str]:
+    """Why a conversation the person replied to may still be open."""
+    mine = _mine_after_first_ping(conv, identity)
+    if not mine:
+        return []
+    reasons = []
+    if _others_after(conv, identity, mine[-1]):
+        reasons.append("others_after_you")
+    if PROMISE.search(mine[-1].get("content") or ""):
+        reasons.append("you_promised")
+    return reasons
 
 
 def brief(message: dict, ctx: RenderContext, chars: int) -> dict:
@@ -255,12 +290,16 @@ def render_row(conv: Conversation, identity: Identity, ctx: RenderContext) -> di
             if newest is not None and _id(newest) > _id(conv.pings[-1][0])
             else None,
         }
-    elif status == "handled":
+    elif status in ("check", "handled"):
         row |= {
             "ping_count": len(conv.pings),
             "pings": [_ping_item(conv.pings[-1], ctx, lim.summary_chars)],
             "your_last_reply": reply,
         }
+        if status == "check":
+            after = _others_after(conv, identity, mine[-1])
+            row["check"] = check_reasons(conv, identity)
+            row["latest"] = brief(after[-1], ctx, lim.summary_chars) if after else None
     else:
         row["pings"] = [_ping_item(conv.pings[-1], ctx, lim.summary_chars)]
     row["id"] = conv.id

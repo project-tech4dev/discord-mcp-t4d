@@ -1,3 +1,4 @@
+import pytest
 from discord_mcp.config import Limits
 from discord_mcp.conversations import group_conversations
 from discord_mcp.matching import ChannelMessages, Identity, RenderContext
@@ -235,7 +236,7 @@ def test_budget_drops_announcements_then_handled_first():
     assert out["conversations"][0]["status"] == "needs_you"
     assert out["omitted"]["announcement"] == 5
     assert out["omitted"]["handled"] >= 1
-    assert out["counts"] == {"needs_you": 1, "reopened": 0, "handled": 5, "announcement": 5}
+    assert out["counts"] == {"needs_you": 1, "reopened": 0, "check": 0, "handled": 5, "announcement": 5}
     assert out["truncated"] is True
     assert out["days"] == 7
     kept_handled = [r["last_activity"] for r in out["conversations"] if r["status"] == "handled"]
@@ -254,7 +255,7 @@ def test_budget_drops_oldest_needs_you_when_alone_over():
 
 def test_under_budget_not_truncated():
     out = fit_budget([fake_row("handled", 1)], {}, 10**6)
-    assert out["omitted"] == {"needs_you": 0, "reopened": 0, "handled": 0, "announcement": 0}
+    assert out["omitted"] == {"needs_you": 0, "reopened": 0, "check": 0, "handled": 0, "announcement": 0}
     assert out["truncated"] is False
 
 
@@ -478,3 +479,104 @@ def test_brief_marks_text_that_was_cut():
     long = msg("100", "10", OTHER, "x" * 50, hours_ago=1)
     assert brief(long, ctx(), 20)["text_cut"] is True
     assert "text_cut" not in brief(long, ctx(), 50)
+
+
+# --- check status ----------------------------------------------------------------
+
+
+def _reply(mid, h, text="sure, done"):
+    return msg(mid, "10", ME, text, hours_ago=h)
+
+
+def test_human_after_my_reply_is_check():
+    conv = one(ping("100", h=6), _reply("101", 5), say("102", OTHER, 4))
+    assert status_of(conv, IDENT) == "check"
+    row = render_row(conv, IDENT, ctx())
+    assert row["check"] == ["others_after_you"]
+    assert row["latest"]["text"] == "text 102"
+
+
+def test_bot_after_my_reply_stays_handled():
+    conv = one(ping("100", h=6), _reply("101", 5), msg("102", "10", OTHER, "beep", hours_ago=4, bot=True))
+    assert status_of(conv, IDENT) == "handled"
+
+
+@pytest.mark.parametrize("text", ["will look at it", "I’ll send it", "I‘ll send it", "Iʼll send it", "let me check", "by EOD", "I'm on it", "On it!"])
+def test_promise_words_make_check(text):
+    conv = one(ping("100", h=6), _reply("101", 5, text))
+    assert status_of(conv, IDENT) == "check"
+    assert render_row(conv, IDENT, ctx())["check"] == ["you_promised"]
+
+
+def test_plain_reply_stays_handled():
+    conv = one(ping("100", h=6), _reply("101", 5, "done, merged"))
+    assert status_of(conv, IDENT) == "handled"
+    row = render_row(conv, IDENT, ctx())
+    assert "check" not in row and "latest" not in row
+
+
+@pytest.mark.parametrize("text", ["willingly done", "done, let me know if anything else", "I commented on it", "done, Let Me Know"])
+def test_closing_phrases_and_word_parts_do_not_count(text):
+    conv = one(ping("100", h=6), _reply("101", 5, text))
+    assert status_of(conv, IDENT) == "handled"
+
+
+def test_both_reasons():
+    conv = one(ping("100", h=6), _reply("101", 5, "will do"), say("102", OTHER, 4))
+    assert render_row(conv, IDENT, ctx())["check"] == ["others_after_you", "you_promised"]
+
+
+def test_new_ping_after_reply_is_still_reopened():
+    conv = one(ping("100", h=6), _reply("101", 5, "will do"), ping("102", h=4))
+    assert status_of(conv, IDENT) == "reopened"
+
+
+def test_check_row_shows_newest_other_message_after_my_reply():
+    conv = one(ping("100", h=6), say("101", OTHER, 5.5), _reply("102", 5), say("103", OTHER, 4), say("104", OTHER, 3))
+    row = render_row(conv, IDENT, ctx())
+    assert row["status"] == "check"
+    assert row["latest"]["text"] == "text 104"
+    assert row["your_last_reply"]["text"] == "sure, done"
+
+
+def test_promise_only_check_has_no_latest():
+    row = render_row(one(ping("100", h=6), _reply("101", 5, "on it")), IDENT, ctx())
+    assert row["latest"] is None
+
+
+def test_check_sorts_between_reopened_and_handled():
+    rows = [fake_row("handled", 9), fake_row("check", 1), fake_row("reopened", 2), fake_row("announcement", 8)]
+    out = fit_budget(rows, {}, 10**6)
+    assert [r["status"] for r in out["conversations"]] == ["reopened", "check", "handled", "announcement"]
+
+
+def test_budget_cuts_handled_before_check():
+    rows = [fake_row("check", d, 900) for d in range(1, 4)] + [fake_row("handled", d, 900) for d in range(4, 9)]
+    out = fit_budget(rows, {}, 4000)
+    assert out["omitted"]["check"] == 0
+    assert out["omitted"]["handled"] >= 1
+    assert out["counts"]["check"] == 3
+
+
+def test_promise_is_read_from_my_last_reply_only():
+    conv = one(ping("100", h=6), _reply("101", 5, "will do"), _reply("102", 4, "done, merged"))
+    assert status_of(conv, IDENT) == "handled"
+
+
+def test_latest_skips_a_bot_after_a_human():
+    bot = msg("103", "10", OTHER, "beep", hours_ago=3, bot=True)
+    conv = one(ping("100", h=6), _reply("101", 5), say("102", OTHER, 4), bot)
+    assert render_row(conv, IDENT, ctx())["latest"]["text"] == "text 102"
+
+
+def test_null_content_in_my_reply_is_handled_safely():
+    reply = _reply("101", 5)
+    reply["content"] = None
+    assert status_of(one(ping("100", h=6), reply), IDENT) == "handled"
+
+
+def test_cut_check_rows_are_counted_in_omitted():
+    rows = [fake_row("check", d, 900) for d in range(1, 9)]
+    out = fit_budget(rows, {}, 4000)
+    assert out["omitted"]["check"] >= 1
+    assert out["omitted"]["check"] + len(out["conversations"]) == 8

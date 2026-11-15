@@ -81,11 +81,16 @@ replies into, else to the one with the most recent ping. @everyone and
 
 Each conversation is marked `needs_you` (no reply from the person yet),
 `reopened` (pinged again after their reply), `handled` (their last message
-is after the latest ping) or `announcement` (only @everyone, or `group` pings). Handled rows
-carry the person's last reply so Claude can judge whether it closed the
-matter. The result has a size budget (40,000 characters by default): when
-it is over, oldest announcements, then oldest handled rows are dropped and
-counted in `omitted`. `get_conversation` opens one conversation in full.
+is after the latest ping) or `announcement` (only @everyone, or `group` pings).
+A conversation that would be handled is marked `check` instead when someone
+other than the person (not a bot) posted after their last reply
+(`others_after_you`), or their last reply is a promise such as "will", "let
+me" or "EOD" (`you_promised`). Check rows carry the reasons and the newest
+message after the reply in `latest`. Handled and check rows carry the
+person's last reply so Claude can judge whether it closed the matter. The
+result has a size budget (40,000 characters by default): when it is over,
+oldest announcements, then oldest handled rows, then oldest check rows are
+dropped and counted in `omitted`. `get_conversation` opens one conversation in full.
 Design: `docs/superpowers/specs/2026-11-15-ping-conversations-design.md`.
 
 ## Tools
