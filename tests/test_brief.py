@@ -459,3 +459,21 @@ async def test_deadline_cap_sets_truncated():
     p = await overview(c, cfg("10", brief_max_deadlines=2))
     assert p["omitted_deadlines"] == 3
     assert p["truncated"] is True
+
+
+async def test_a_question_mark_inside_a_link_is_not_an_ask():
+    shared = ask("100", "10", 3 * DAY, text="for folks trying it - https://example.com/post?ref=abc")
+    assert (await loops(server(c10=[shared]), cfg("10")))["loops"] == []
+
+
+async def test_a_real_question_next_to_a_link_is_still_an_ask():
+    q = ask("100", "10", 3 * DAY, text="https://example.com/post?ref=abc worth a look?")
+    assert [x["kind"] for x in (await loops(server(c10=[q]), cfg("10")))["loops"]] == ["unanswered_ask"]
+
+
+def test_a_question_mark_right_after_a_link_is_still_a_question():
+    from discord_mcp.brief import _asks
+
+    assert _asks("did you see https://example.com/doc?")
+    assert _asks("have you read <https://example.com/doc>?")
+    assert not _asks("https://example.com/a?b=1")

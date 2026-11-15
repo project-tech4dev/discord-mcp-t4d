@@ -188,6 +188,13 @@ def fit_server_overview(
 # --- open loops ---------------------------------------------------------------------
 
 ASK = re.compile(r"\?|\b(?:can you|could you|please|pls|any update|let me know|when will)\b", re.IGNORECASE)
+# A link, without trailing punctuation: "did you see https://x/doc?" is still a question.
+_LINK = re.compile(r"(?:https?://|www\.)[^\s<>]*[^\s<>?.,!)\]]", re.IGNORECASE)
+
+
+def _asks(text: str) -> bool:
+    """A question or ask phrase, ignoring links (a "?" in a URL's query string is not a question)."""
+    return bool(ASK.search(_LINK.sub(" ", text)))
 _APOS = "['\u2018\u2019\u02bc`]"
 # A first-person promise across 30 days of messages: stricter than get_my_pings' you_promised,
 # which only reads the last reply in a ping conversation. "will" alone ("that will work") or
@@ -287,7 +294,7 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
                 text = m.get("content") or ""
                 if _author(m) == me:
                     named = _named(m, me)
-                    asked = bool(named) and bool(ASK.search(text)) and age >= lim.nudge_ask_days
+                    asked = bool(named) and _asks(text) and age >= lim.nudge_ask_days
                     if asked:
                         owing = [name for uid, name in named.items() if not posted_after(uid, _time(m))]
                         if owing:
@@ -310,7 +317,7 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
             if _days_since(now, _time(last)) < lim.nudge_stall_days:
                 continue
             text = last.get("content") or ""
-            if ASK.search(text) or signals(text, g.extra)[1]:
+            if _asks(text) or signals(text, g.extra)[1]:
                 others: list[str] = []
                 for m in t.messages:
                     name = _display_name(m.get("author", {}))

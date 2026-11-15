@@ -344,7 +344,8 @@ def _minimal(row: dict, chars: int) -> dict:
 
 
 def fit_budget(rows: list[dict], base: dict, max_chars: int, compact_chars: int | None = None) -> dict:
-    """Order rows most urgent first; if too big, shorten message text; then drop from the end until it fits."""
+    """Order rows most urgent first; if too big, drop handled/announcement rows, then shorten the least
+    urgent rows only as far as needed, then drop from the end until it fits."""
     rank = {s: i for i, s in enumerate(STATUS_ORDER)}
     ordered = sorted(rows, key=lambda r: r["last_activity"], reverse=True)
     ordered.sort(key=lambda r: rank[r["status"]])
@@ -353,32 +354,55 @@ def fit_budget(rows: list[dict], base: dict, max_chars: int, compact_chars: int 
         counts[r["status"]] += 1
     omitted = {s: 0 for s in STATUS_ORDER}
 
-    def payload(kept: list[dict]) -> dict:
-        return base | {
+    kept = list(ordered)
+    levels: list[int] = [0] * len(kept)  # 0 whole, 1 texts cut, 2 cut to the bones
+
+    def payload() -> dict:
+        out = base | {
             "conversations": kept,
             "counts": counts,
             "omitted": dict(omitted),
             "truncated": any(omitted.values()),
         }
+        if any(levels):
+            out["compact"] = True
+            out["compact_level"] = max(levels)
+        return out
 
-    kept = list(ordered)
-    level = 0
+    def shrink(i: int, lvl: int) -> None:
+        row = _compact(kept[i], compact_chars) if lvl == 1 else _minimal(kept[i], compact_chars // 2)
+        kept[i] = row | {"compact": lvl}  # per row, so Claude knows which rows to open for detail
+        levels[i] = lvl
+
+    def drop() -> None:
+        omitted[kept.pop()["status"]] += 1
+        levels.pop()
+
     # First drop handled and announcement rows (least urgent last in order), keeping urgent rows whole.
-    while kept and kept[-1]["status"] in ("handled", "announcement") and _size(payload(kept)) > max_chars:
-        omitted[kept.pop()["status"]] += 1
-    if compact_chars is not None and _size(payload(kept)) > max_chars:
-        # Only then shorten: level 1 cuts texts and keeps the first and last ping; level 2 keeps only
-        # the newest ping, shorter still. Open any row with get_conversation for the full text.
-        level, kept = 1, [_compact(r, compact_chars) for r in kept]
-        if _size(payload(kept)) > max_chars:
-            level, kept = 2, [_minimal(r, compact_chars // 2) for r in kept]
-    while kept and _size(payload(kept)) > max_chars:
-        omitted[kept.pop()["status"]] += 1
-    out = payload(kept)
-    if level:
-        out["compact"] = True
-        out["compact_level"] = level
-    return out
+    while kept and kept[-1]["status"] in ("handled", "announcement") and _size(payload()) > max_chars:
+        drop()
+    if compact_chars is not None and _size(payload()) > max_chars:
+        # Then shorten, least urgent rows first and only as far as needed: level 1 cuts texts and keeps
+        # the first and last ping; level 2 keeps only the newest ping, shorter still. A size estimate
+        # keeps this linear; the exact checks below correct it, shortening further before dropping.
+        size = _size(payload())
+        for lvl in (1, 2):
+            i = len(kept) - 1
+            while size > max_chars and i >= 0:
+                before = _size(kept[i])
+                shrink(i, lvl)
+                size += _size(kept[i]) - before
+                i -= 1
+            if size <= max_chars:
+                break
+        while _size(payload()) > max_chars:
+            nxt = next((i for i in reversed(range(len(kept))) if levels[i] < 2), None)
+            if nxt is None:
+                break
+            shrink(nxt, levels[nxt] + 1)
+    while kept and _size(payload()) > max_chars:
+        drop()
+    return payload()
 
 
 # --- one conversation in full ---------------------------------------------------

@@ -30,6 +30,8 @@ class Limits:
     conversation_max_hours: int = 24
     summary_chars: int = 200
     max_result_chars: int = 40000
+    # get_my_pings only; raise it for people with very busy weeks (see README on Claude Code's cap).
+    pings_max_chars: int = 40000
     conversation_max_messages: int = 50
     row_max_pings: int = 5
     overview_max_days: int = 30
@@ -144,6 +146,8 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError(f"unknown limits: {sorted(unknown)}")
     if not all(isinstance(v, int) and v > 0 for v in given.values()):
         raise ConfigError("limits must be positive integers")
+    if given.get("pings_max_chars", 0) > 200000:
+        raise ConfigError("pings_max_chars must be at most 200000")
 
     allow_all = raw.get("allow_all_channels", False)
     if not isinstance(allow_all, bool):
