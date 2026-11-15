@@ -117,7 +117,7 @@ def test_everyone_conversation_does_not_take_my_plain_message():
 
 
 def test_here_ping_counts_me_as_participant():
-    here = msg("100", "10", OTHER, "@here quick one", mention_everyone=True, hours_ago=5)
+    here = msg("100", "10", OTHER, "@here quick one, can you check?", mention_everyone=True, hours_ago=5)
     convs = group(plain(here, say("101", ME, 4)))
     assert ids(convs[0]) == ["100", "101"]
 
@@ -154,7 +154,7 @@ def test_status_announcement_when_only_everyone_pings():
 
 
 def test_here_conversation_is_not_announcement():
-    here = msg("100", "10", OTHER, "@here quick one", mention_everyone=True, hours_ago=5)
+    here = msg("100", "10", OTHER, "@here quick one, can you check?", mention_everyone=True, hours_ago=5)
     assert status_of(one(here), IDENT) == "needs_you"
 
 
@@ -236,7 +236,7 @@ def test_budget_drops_announcements_then_handled_first():
     assert out["conversations"][0]["status"] == "needs_you"
     assert out["omitted"]["announcement"] == 5
     assert out["omitted"]["handled"] >= 1
-    assert out["counts"] == {"needs_you": 1, "reopened": 0, "check": 0, "handled": 5, "announcement": 5}
+    assert out["counts"] == {"needs_you": 1, "reopened": 0, "check": 0, "fyi": 0, "handled": 5, "announcement": 5}
     assert out["truncated"] is True
     assert out["days"] == 7
     kept_handled = [r["last_activity"] for r in out["conversations"] if r["status"] == "handled"]
@@ -255,7 +255,7 @@ def test_budget_drops_oldest_needs_you_when_alone_over():
 
 def test_under_budget_not_truncated():
     out = fit_budget([fake_row("handled", 1)], {}, 10**6)
-    assert out["omitted"] == {"needs_you": 0, "reopened": 0, "check": 0, "handled": 0, "announcement": 0}
+    assert out["omitted"] == {"needs_you": 0, "reopened": 0, "check": 0, "handled": 0, "fyi": 0, "announcement": 0}
     assert out["truncated"] is False
 
 
@@ -346,7 +346,7 @@ def test_heavy_week_keeps_every_needs_you_row_and_stays_in_budget():
         for i in range(14):  # 14 pings per channel, 140 in all, 13h apart so each is its own conversation
             mid = 10_000 * (c + 1) + 10 * i
             h = 160 - 13 * i
-            text = f"<@{ME}> " + "q" * 240
+            text = f"<@{ME}> can you check " + "q" * 240
             msgs.append(msg(str(mid), ch["id"], OTHER, text, mentions=[user(ME)], hours_ago=h))
             if i % 7:  # 2 of every 14 left unanswered
                 msgs.append(msg(str(mid + 1), ch["id"], ME, "a" * 240, hours_ago=h - 0.5))
@@ -460,7 +460,7 @@ def test_my_plain_message_does_not_join_a_group_ping_conversation():
 
 def test_group_ping_does_not_set_the_answer_point():
     role = msg("100", "10", OTHER, "<@&R> out today", mention_roles=[ROLE_DEV], hours_ago=5)
-    reply = say("102", OTHER, 3, referenced=say("90", ME, 6))
+    reply = msg("102", "10", OTHER, "can you check?", hours_ago=3, referenced=say("90", ME, 6))
     mine = say("101", ME, 4, referenced=role)
     [conv] = [c for c in quiet_group(plain(role, mine, reply)) if any(p[1] == "reply" for p in c.pings)]
     assert status_of(conv, IDENT) == "needs_you"
@@ -691,3 +691,136 @@ def test_shortened_rows_are_marked_and_whole_rows_are_not():
     assert any(m in (1, 2) for m in marks)
     first_marked = next(i for i, m in enumerate(marks) if m)
     assert all(m for m in marks[first_marked:])  # shortened rows are the least urgent, at the end
+
+
+# --- fyi: pinged, but nothing asked ------------------------------------------------
+
+
+def mention(mid, text, h=5.0, **kw):
+    return msg(mid, "10", OTHER, text, mentions=[user(ME)], hours_ago=h, **kw)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ha, nice one",
+        f"cc <@{ME}>",
+        f"Big shoutout to <@{ME}> 🙂",
+        f"<@{ME}> sharing the notes for your reference: https://example.org/notes?id=1",
+        f"<@{ME}> thanks!",
+    ],
+)
+def test_ping_that_asks_nothing_is_fyi(text):
+    conv = one(mention("100", text))
+    assert status_of(conv, IDENT) == "fyi"
+    row = render_row(conv, IDENT, ctx())
+    assert row["status"] == "fyi"
+    assert row["pings"][0]["link"].endswith("/10/100")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"<@{ME}>",
+        f"<@{ME}> <@{THIRD}>",
+        f"<@{ME}> can u fix the build?",
+        f"<@{ME}> can u'll write the release notes",
+        f"<@{ME}> thoughts",
+        f"<@{ME}> plz review https://example.org/doc",
+        f"<@{ME}> kindly take a look at the deck",
+        f"<@{ME}> did you see https://example.org/doc?",
+        f"<@{ME}> look at the draft",
+        f"<@{ME}> pls review",
+        "@here who can review",
+        f"<@{ME}> anyone free for a call",
+        f"Hey <@{ME}>, review this",
+        f"Hi <@{ME}>!",
+        f"<@{ME}> any updates on the report",
+        f"<@{ME}> lmk",
+        f"<@{ME}> let us know by friday",
+        f"<@{ME}> do you have time today",
+        f"<@{ME}> are you free",
+        f"<@{ME}> shall we sync",
+        f"<@{ME}> wdyt",
+        f"<@{ME}> mind taking a look",
+        f"<@{ME}> waiting on you for the numbers",
+        f"<@{ME}> over to you",
+        f"<@{ME}> you need to submit the form by Friday",
+        f"<@{ME}> gentle reminder",
+        f"<@{ME}> following up on this",
+        f"<@{ME}> bump",
+        f"<@{ME}> urgent",
+        f"<#999> <@{ME}>",
+        f"<@{ME}> <:wave:123>",
+        f"<@{ME}> <a:wave:123>",
+        f"<@{ME}> <t:1700000000:R>",
+        f"<@{ME}> [doc](https://example.org/a)",
+    ],
+)
+def test_ping_that_asks_or_only_calls_needs_you(text):
+    assert status_of(one(mention("100", text)), IDENT) == "needs_you"
+
+
+def test_any_asking_ping_makes_needs_you():
+    conv = one(mention("100", "thanks", h=6), mention("101", f"<@{ME}> can you check?", h=5))
+    assert status_of(conv, IDENT) == "needs_you"
+
+
+def test_role_ping_that_asks_nothing_elsewhere_is_fyi():
+    role = msg("100", "10", OTHER, "<@&R> new portal address is live", mention_roles=[ROLE_DEV], hours_ago=5)
+    assert status_of(one(role), IDENT) == "fyi"
+
+
+def test_thanks_after_my_reply_is_check_not_reopened():
+    conv = one(ping("100", h=6), _reply("101", 5, "done"), mention("102", f"<@{ME}> cool thanks", h=4))
+    assert status_of(conv, IDENT) == "check"
+    assert render_row(conv, IDENT, ctx())["check"] == ["others_after_you"]
+
+
+def test_new_ask_after_my_reply_still_reopens():
+    conv = one(ping("100", h=6), _reply("101", 5, "done"), mention("102", f"<@{ME}> one more, can you check?", h=4))
+    assert status_of(conv, IDENT) == "reopened"
+
+
+def test_fyi_sorts_after_check_and_is_dropped_after_handled():
+    rows = [fake_row("fyi", 9), fake_row("check", 1), fake_row("handled", 8), fake_row("needs_you", 2)]
+    out = fit_budget(rows, {}, 10**6)
+    assert [r["status"] for r in out["conversations"]] == ["needs_you", "check", "fyi", "handled"]
+    rows = [fake_row("needs_you", 1, 900), fake_row("fyi", 2, 900), fake_row("handled", 3, 900)]
+    out = fit_budget(rows, {}, 2500)
+    assert out["omitted"]["handled"] == 1
+    assert out["omitted"]["fyi"] == 0
+
+
+def test_greeting_ping_then_ask_in_next_message_needs_you():
+    conv = one(mention("100", f"Hey <@{ME}>", h=6), say("101", OTHER, 5.9))
+    conv.messages[-1]["content"] = "can you send the numbers"
+    assert status_of(conv, IDENT) == "needs_you"
+
+
+def test_pingers_follow_up_after_my_reply_reopens_only_if_it_asks():
+    conv = one(ping("100", h=6), _reply("101", 5, "done"), mention("102", f"<@{ME}> thanks", h=4), say("103", OTHER, 3.9))
+    assert status_of(conv, IDENT) == "check"
+    conv.messages[-1]["content"] = "one more: can you check the totals"
+    assert status_of(conv, IDENT) == "reopened"
+
+
+def test_someone_elses_ask_in_the_thread_does_not_make_needs_you():
+    t = ChannelMessages(thread("50"), "general › topic", [
+        msg("51", "50", OTHER, f"cc <@{ME}>", mentions=[user(ME)], hours_ago=6),
+        msg("52", "50", THIRD, "can you check the totals?", hours_ago=5),
+    ])
+    [conv] = group(t)
+    assert status_of(conv, IDENT) == "fyi"
+
+
+def test_markdown_link_with_words_is_like_a_bare_link():
+    assert status_of(one(mention("100", f"<@{ME}> sharing [notes](https://example.org/a) for reference")), IDENT) == "fyi"
+
+
+def test_fyi_row_shows_the_direct_ping_not_a_later_everyone():
+    direct = mention("100", f"cc <@{ME}>", h=6)
+    everyone = msg("101", "10", OTHER, "@everyone standup moved", mention_everyone=True, hours_ago=5)
+    conv = one(direct, everyone)
+    assert status_of(conv, IDENT) == "fyi"
+    assert render_row(conv, IDENT, ctx())["pings"][0]["link"].endswith("/10/100")

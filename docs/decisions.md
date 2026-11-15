@@ -367,3 +367,43 @@ why it was made, and what was rejected.
 - **Deferred:** a 429 on any route pauses the whole client (simple and
   cautious; per-route pauses only for non-global 429s if this proves slow);
   private threads the bot isn't in still cost one refused request.
+
+## 2026-11-15: fyi status for pings that ask nothing; no loops from leave channels
+
+- **Context:** trying the brief on a live server showed noise: banter,
+  shoutouts, "cc @you" and leave notices that name someone came back as
+  `needs_you`; a leave notice that named someone and "I will not be able
+  to make it" came back as `promise_to_you`.
+- **Decision:**
+  - New `get_my_pings` status `fyi`: the person was pinged directly but no
+    ping asked anything of them, and they have not replied. A ping asks when
+    it has a question or ask phrase, a question without "?" ("who can
+    review"), an opening imperative ("look at", "hey, review"), or is only
+    mentions, tags, a link or a greeting (a bare "@you" calls for
+    attention). The pinger's follow-up messages count too ("Hi @you", then
+    the ask). A non-asking ping
+    after the person's reply ("cool thanks") no longer reopens; the row is
+    `check` (`others_after_you`). `fyi` sorts after `check` and is dropped
+    after announcement and handled rows when over budget.
+  - `get_open_loops` skips broadcast (`direct_only`) channels and their
+    threads, as the deadline scan already did.
+  - "I will not…", "I'll not…" and "I will be on leave / out / away / off /
+    offline / unavailable / travelling" are not promises.
+  - Deployment config (not in the repo): channels that carry only notices,
+    such as a hiring channel, should be `pings = "direct_only"`.
+- **Why:** the brief's first three sections should hold what the person
+  must act on; a missed real ask is costlier than a noisy row, so the ask
+  test is deliberately loose and a bare mention still counts.
+- **Rejected:** a model-based classifier (cost, and message text would go to
+  another service); dropping fyi rows entirely (a shared doc or date can
+  still matter, so they stay listed); marking every team channel
+  `direct_only` (real role asks there would become announcements).
+- **Review outcomes:** code review found a greeting ping followed by the ask
+  in the next message became `fyi` (now the pinger's follow-ups are read),
+  common asks were missed ("any updates", "lmk", "do you have time",
+  "gentle reminder", a greeting before an imperative), channel/emoji/
+  timestamp tags and markdown links were not stripped, and an fyi row could
+  show a later @everyone instead of the direct ping; all fixed with tests.
+  Security review: nothing Critical/High/Medium; test strings that read like
+  real messages were replaced with invented ones; no ReDoS (worst case under
+  5 ms on 4,000-character adversarial input).

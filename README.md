@@ -20,7 +20,7 @@ tunnel). Deployment as a hosted connector is stage 3.
 | `discord_mcp/deadlines.py` | Finds deadline wording in text and resolves it to a date (time zone, day/month order) |
 | `discord_mcp/topics.py` | Channel overview and search: topics (threads and main-channel stretches), compact rows, size budget |
 | `discord_mcp/signals.py` | Spots dates, deadline words, document links and watch/look_for words |
-| `discord_mcp/conversations.py` | Groups pings into conversations, marks each needs_you / reopened / check / handled / announcement, fits the result to a size budget |
+| `discord_mcp/conversations.py` | Groups pings into conversations, marks each needs_you / reopened / check / fyi / handled / announcement, fits the result to a size budget |
 | `discord_mcp/permissions.py` | Discord's permission rules: owner, Administrator, @everyone, roles, member, private threads |
 | `discord_mcp/digest.py` | Runs each tool: allowlist, deny list, permissions, fetch, drop-and-log on any failure |
 | `discord_mcp/oauth_provider.py` | The sign-in server Claude talks to, in front of Discord |

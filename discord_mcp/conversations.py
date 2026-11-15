@@ -29,7 +29,49 @@ THREAD_TYPES = frozenset({10, 11, 12})
 # Ping reasons not asked of the person directly: @everyone anywhere, and @here or a role
 # ping ("group") in a direct_only channel.
 BROADCASTS = frozenset({"everyone", "group"})
-STATUS_ORDER = ("needs_you", "reopened", "check", "handled", "announcement")
+STATUS_ORDER = ("needs_you", "reopened", "check", "fyi", "handled", "announcement")
+# Rows the size budget drops first, from the end of STATUS_ORDER.
+DROPPABLE = frozenset({"fyi", "handled", "announcement"})
+
+# An ask: a question or an ask phrase. Links are ignored ("?" in a query string is not a question).
+ASK = re.compile(r"\?|\b(?:can you|could you|please|pls|any updates?|let me know|when will)\b", re.IGNORECASE)
+_LINK = re.compile(r"(?:https?://|www\.)[^\s<>]*[^\s<>?.,!)\]]", re.IGNORECASE)
+_GREETING = r"(?:hey|hi|hello|hiya|yo|good\s+(?:morning|afternoon|evening))"
+# Looser phrasing that, in a ping, still asks something of the person.
+_PING_ASK = re.compile(
+    r"\b(?:can|could|would|do|are|will|shall)\s+(?:you|u|we)\b|\bplz\b|\bkindly\b|\brequest\s+you\b"
+    r"|\bthoughts\b|\btake\s+a\s+(?:look|peek)\b|\bneed\s+(?:you|your)\b|\blmk\b|\blet\s+(?:me|us)\s+know\b"
+    r"|\bwdyt\b|\basap\b|\burgent\b|\breminder\b|\bfollow(?:ing)?[\s-]?up\b|\bbump\b|\bmind\s+\w+ing\b"
+    r"|\bwaiting\s+(?:on|for)\s+(?:you|your)\b|\bover\s+to\s+you\b|\byou\s+need\s+to\b"
+    # A question without "?": "who can review", "anyone free".
+    r"|\b(?:who|what|when|where|which|how|why)\s+(?:can|could|will|would|is|are|do|does|did|should)\b"
+    r"|\bany(?:one|body)\s+(?:can|could|has|have|wants?|free)\b"
+    # An opening imperative, after an optional greeting: "look at this", "hey, review", "pls check".
+    rf"|^\W*(?:{_GREETING}\W+)?(?:(?:pls|please|plz)\s+)?(?:look|review|check|see|send|share|add|update"
+    r"|confirm|approve|help|reply|respond|fill|sign|join|comment|read|test|fix|merge|call)\b",
+    re.IGNORECASE,
+)
+# Mentions and other Discord tags (channels, custom emoji, timestamps), and markdown links (bounded).
+_TAGS = re.compile(
+    r"<@[!&]?\w+>|<#\d+>|<a?:\w+:\d+>|<t:-?\d+(?::\w)?>|@(?:here|everyone)\b"
+    r"|\[[^\]\n]{0,200}\]\([^)\s]{1,500}\)"
+)
+_ONLY_GREETING = re.compile(rf"^\W*(?:{_GREETING}\W*)?$", re.IGNORECASE)
+
+
+def asks(text: str) -> bool:
+    """A question or ask phrase, ignoring links."""
+    return bool(ASK.search(_LINK.sub(" ", text)))
+
+
+def ping_asks(text: str) -> bool:
+    """Whether a ping asks something of the person. A ping that is only mentions, a link or a
+    greeting calls for attention, so it asks; "cc @you", thanks or a shoutout do not."""
+    bare = _LINK.sub(" ", _TAGS.sub(" ", text)).strip()
+    if not re.sub(r"[\W_]+", "", bare) or _ONLY_GREETING.match(bare):
+        return True
+    return asks(bare) or bool(_PING_ASK.search(bare))
+
 
 # A reply that promises rather than answers. Whole words, any apostrophe style.
 # "let me know" closes an answer, so it is not a promise; "on it" counts only at the start
@@ -200,15 +242,31 @@ def _mine_after_first_ping(conv: Conversation, identity: Identity) -> list[dict]
     return [m for m in conv.messages if _author(m) == identity.user_id and _id(m) > first]
 
 
+def _asked(conv: Conversation, direct: list[Ping], after: int, before: int | None) -> bool:
+    """Whether a direct ping after `after`, or a later message by its author before `before`,
+    asks something ("Hi @you" then the ask in the next message)."""
+    pings = [p for p in direct if _id(p[0]) > after]
+    if not pings:
+        return False
+    authors = {_author(p[0]) for p in pings}
+    start = _id(pings[0][0])
+    for m in conv.messages:
+        i = _id(m)
+        if i >= start and (before is None or i < before) and _author(m) in authors:
+            if ping_asks(m.get("content") or ""):
+                return True
+    return False
+
+
 def status_of(conv: Conversation, identity: Identity) -> str:
     direct = [p for p in conv.pings if p[1] not in BROADCASTS]
     if not direct:
         return "announcement"
     mine = _mine_after_first_ping(conv, identity)
     if not mine:
-        return "needs_you"
+        return "needs_you" if _asked(conv, direct, 0, None) else "fyi"
     last_mine = _id(mine[-1])
-    if any(_id(p[0]) > last_mine for p in direct):
+    if _asked(conv, direct, last_mine, None):
         return "reopened"
     return "check" if check_reasons(conv, identity) else "handled"
 
@@ -301,7 +359,9 @@ def render_row(conv: Conversation, identity: Identity, ctx: RenderContext) -> di
             row["check"] = check_reasons(conv, identity)
             row["latest"] = brief(after[-1], ctx, lim.summary_chars) if after else None
     else:
-        row["pings"] = [_ping_item(conv.pings[-1], ctx, lim.summary_chars)]
+        # fyi shows the direct ping that named the person, not a later @everyone.
+        shown = [p for p in conv.pings if p[1] not in BROADCASTS] if status == "fyi" else conv.pings
+        row["pings"] = [_ping_item(shown[-1], ctx, lim.summary_chars)]
     row["id"] = conv.id
     return row
 
@@ -378,8 +438,8 @@ def fit_budget(rows: list[dict], base: dict, max_chars: int, compact_chars: int 
         omitted[kept.pop()["status"]] += 1
         levels.pop()
 
-    # First drop handled and announcement rows (least urgent last in order), keeping urgent rows whole.
-    while kept and kept[-1]["status"] in ("handled", "announcement") and _size(payload()) > max_chars:
+    # First drop announcement, handled and fyi rows (least urgent last in order), keeping urgent rows whole.
+    while kept and kept[-1]["status"] in DROPPABLE and _size(payload()) > max_chars:
         drop()
     if compact_chars is not None and _size(payload()) > max_chars:
         # Then shorten, least urgent rows first and only as far as needed: level 1 cuts texts and keeps
