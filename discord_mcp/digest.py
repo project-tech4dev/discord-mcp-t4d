@@ -23,7 +23,17 @@ from discord_mcp import audit
 from discord_mcp.config import Config
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.conversations import fit_budget, group_conversations, render_full, render_row
-from discord_mcp.matching import CONTENT_TYPES, ChannelMessages, Identity, RenderContext, render_message
+from discord_mcp.matching import ChannelMessages, Identity, RenderContext
+from discord_mcp.messages import (
+    CONTENT_TYPES,
+    PRIVATE_THREAD,
+    READABLE_TYPES,
+    TEXT_TYPES,
+    THREAD_TYPES,
+    channel_name,
+    thread_label,
+)
+from discord_mcp.render import render_message
 from discord_mcp.signals import Words, check_words
 from discord_mcp.brief import (
     channel_entry,
@@ -36,11 +46,6 @@ from discord_mcp.brief import (
 from discord_mcp.topics import Topic, build_topics, fit_overview, fit_search, overview_row, render_topic, search_results
 from discord_mcp.permissions import GuildSnapshot, can_read
 
-TEXT_TYPES = frozenset({0, 5})  # text, announcement
-FORUM_TYPES = frozenset({15})  # messages live only in its threads
-READABLE_TYPES = TEXT_TYPES | FORUM_TYPES
-THREAD_TYPES = frozenset({10, 11, 12})
-PRIVATE_THREAD = 12
 DISCORD_EPOCH_MS = 1420070400000
 _LINK = re.compile(r"^https://discord\.com/channels/(\d+)/(\d+)/(\d+)$")
 _CONV_ID = re.compile(r"^(\d+)/(\d+)$")
@@ -428,7 +433,7 @@ class Digest:
         channels = [c for c in view.visible if c["id"] not in failed]
         names = {c["id"]: c.get("name", c["id"]) for c in channels}
         targets = [(c, c.get("name", c["id"])) for c in channels if c.get("type") in TEXT_TYPES]
-        targets += [(t, f"{names.get(t.get('parent_id'), '?')} › {t.get('name', t['id'])}") for t in threads]
+        targets += [(t, thread_label(names.get(t.get("parent_id"), "?"), t)) for t in threads]
 
         # One hard message budget for the request: an equal share first, then what quiet channels
         # left unused goes back to the ones that filled their share.
@@ -546,7 +551,7 @@ class Digest:
 
         name = parent.get("name", parent["id"])
         targets = [(parent, name)] if parent.get("type") in TEXT_TYPES else []
-        targets += [(t, f"{name} › {t.get('name', t['id'])}") for t in threads if t.get("parent_id") == parent["id"]]
+        targets += [(t, thread_label(name, t)) for t in threads if t.get("parent_id") == parent["id"]]
         fetched, codes = await self._fetch(identity, tool, targets, cutoff)
         if not fetched and _rate_limited(codes):
             raise DiscordError(429)
@@ -602,7 +607,7 @@ class Digest:
         """One thread over the overview window, fetching only that thread and its starter."""
         days = self._limits.overview_max_days
         view, parent, thread = await self._thread_access(identity, tool, thread_id, days)
-        label = f"{parent.get('name', parent['id'])} › {thread.get('name', thread_id)}"
+        label = thread_label(channel_name(parent), thread)
         fetched, codes = await self._fetch(identity, tool, [(thread, label)], self._clock() - timedelta(days=days))
         if not fetched:
             raise _busy_or_denied(codes)
@@ -681,7 +686,7 @@ class Digest:
         else:
             main_failed = []
         thread_cms, thread_failed = await self._fetch(
-            identity, tool, [(t, f"{name} › {t.get('name', t['id'])}") for t in threads], cutoff, thread_cap
+            identity, tool, [(t, thread_label(name, t)) for t in threads], cutoff, thread_cap
         )
         fetched = main_fetch + thread_cms
         main = main_fetch[0] if main_fetch else None

@@ -472,7 +472,7 @@ async def test_a_real_question_next_to_a_link_is_still_an_ask():
 
 
 def test_a_question_mark_right_after_a_link_is_still_a_question():
-    from discord_mcp.brief import _asks
+    from discord_mcp.wording import asks as _asks
 
     assert _asks("did you see https://example.com/doc?")
     assert _asks("have you read <https://example.com/doc>?")

@@ -15,7 +15,11 @@ tunnel). Deployment as a hosted connector is stage 3.
 | File | Job |
 | --- | --- |
 | `discord_mcp/discord_client.py` | Discord REST client. GET only, paging, rate limits, errors carry status only |
-| `discord_mcp/matching.py` | Decides which messages ping a person, renders them |
+| `discord_mcp/messages.py` | Shared accessors for Discord messages and channels: types, time, author, links, labels |
+| `discord_mcp/matching.py` | Decides which messages ping a person |
+| `discord_mcp/render.py` | Shapes messages for Claude: names, readable mentions, compact and full items |
+| `discord_mcp/wording.py` | Reads intent from text: asks, promises, month names |
+| `discord_mcp/budget.py` | Measures results as sent and trims them to their size budget |
 | `discord_mcp/brief.py` | Server-wide brief: last week per channel, deadlines due soon, open loops (promises, asks, stalled threads), size budgets |
 | `discord_mcp/deadlines.py` | Finds deadline wording in text and resolves it to a date (time zone, day/month order) |
 | `discord_mcp/topics.py` | Channel overview and search: topics (threads and main-channel stretches), compact rows, size budget |
