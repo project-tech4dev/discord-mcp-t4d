@@ -177,3 +177,17 @@ why it was made, and what was rejected.
   item, and a URL cut at the length limit must not be passed on half-written.
 - **Rejected:** a separate server-side list of URLs per message with their
   hosts (possible later hardening).
+
+## 2026-11-15 — Testing with claude.ai through Tailscale Funnel
+
+- **Decision:** to test the connector in claude.ai before deployment, run the
+  server locally behind a Tailscale Funnel, with a separate git-ignored
+  `.env.funnel.local`. The README documents every local mode (tests, stdio,
+  HTTP with Claude Code, claude.ai through the tunnel).
+- **Why:** claude.ai connects from Anthropic's cloud, so `localhost` can't be
+  reached. Funnel ends the encryption on the local machine, so the tunnel
+  provider can't read message text, and it gives a stable address.
+- **Rejected:** ngrok and Cloudflare tunnels (they decrypt traffic at their
+  edge); deploying early only to test.
+- **Caveat:** the open tunnel exposes the server before per-person rate limits
+  exist (stage 3), so it stays open only while testing.

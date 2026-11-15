@@ -1,12 +1,14 @@
 # discord-mcp
 
-Read-only MCP server that gives each person their Discord pings from the last
-7 days, limited to permitted channels they can already see (an allowlist, or
-every channel except a deny list). It stores no
-message text anywhere. See [docs/design.md](docs/design.md).
+Read-only MCP server that gives each person their Discord pings, channel
+overviews and search, limited to permitted channels they can already see (an
+allowlist, or every channel except a deny list). It stores no message text
+anywhere. See [docs/design.md](docs/design.md) for the design and
+[docs/decisions.md](docs/decisions.md) for why things are the way they are.
 
 **Status:** stage 2 of 3. Discord sign-in and the full permission check are
-built. Runs locally; deployment as a remote connector is stage 3.
+built, and it runs locally (with Claude Code, or with claude.ai through a
+tunnel). Deployment as a hosted connector is stage 3.
 
 ## Layout
 
@@ -27,62 +29,118 @@ built. Runs locally; deployment as a remote connector is stage 3.
 | `discord_mcp/audit.py` | The only log output: user ID, tool, channel IDs, count, duration, status |
 | `config.toml` | Allowlist (starts empty), allow-all mode, channel deny list, per-person deny list, limits |
 | `scripts/live_check.py` | Local check against real Discord; prints IDs and reasons, never text |
-| `scripts/with_keychain.sh` | Runs a command with the bot token from the macOS Keychain |
+| `scripts/with_keychain.sh` | Runs a command with secrets from the macOS Keychain (the bot token; in HTTP mode also the sign-in secrets) |
 
-## Run the tests
+## Local development
+
+Everything below runs on your own machine. Pick the mode you need:
+
+| Mode | Use it for | Sign-in |
+| --- | --- | --- |
+| A. Tests only | Changing code | None |
+| B. Claude Code, stdio | Quick checks as yourself | None (`DEV_USER_ID`) |
+| C. Claude Code, HTTP | Testing sign-in and permissions as Claude sees them | Discord |
+| D. claude.ai, through a tunnel | Testing the real connector experience | Discord |
+
+### A. Run the tests
 
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest
+.venv/bin/pytest -q
 ```
 
-## Settings (environment variables only)
+Tests use `tests/fakes.py` (a fake Discord client and synthetic IDs), never
+real data.
 
-| Variable | Mode | Meaning |
-| --- | --- | --- |
-| `DISCORD_BOT_TOKEN` | both | Bot token (secret) |
-| `DISCORD_GUILD_ID` | both | Your Discord server ID |
-| `DIGEST_CONFIG` | both | Config file path (default `config.toml`) |
-| `SERVER_NAME` | both | Name shown in Claude (default `discord-mcp`) |
-| `DEV_USER_ID` | stdio | Local testing as this Discord user, no sign-in. Refused with `PUBLIC_URL` |
-| `PUBLIC_URL` | http | The server's public address; https unless localhost |
-| `DISCORD_CLIENT_ID` | http | Discord application ID (for sign-in) |
-| `DISCORD_CLIENT_SECRET` | http | Discord application client secret (secret) |
-| `OAUTH_CLIENT_ID` | http | The client ID you give Claude |
-| `OAUTH_CLIENT_SECRET` | http | The client secret you give Claude (secret) |
-| `OAUTH_REDIRECT_URIS` | http | Comma-separated; default `https://claude.ai/api/mcp/auth_callback` |
-| `ENCRYPTION_KEY` | http | 32 random bytes, base64url (secret). Changing it signs everyone out |
-| `HOST`, `PORT` | http | Listen address (default `127.0.0.1:8000`) |
+### One-time setup for modes B to D
 
-Generate a key or client secret with:
-`python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"`
+**1. A Discord bot** (Developer Portal → New Application → Bot)
 
-## Bot setup
+1. Turn on the Message Content intent. The Server Members intent is not needed.
+2. Invite the bot with only View Channels and Read Message History. Never
+   Administrator.
+3. Private channels: the bot reads only what its roles allow. A channel a
+   person can see but the bot can't shows up as `skipped_channels`.
+   - Preferred: in each private channel's permissions, give the bot's own role
+     View Channel and Read Message History. It gets exactly those channels.
+   - Shortcut: add the bot to a team role. It then gets every channel that role
+     opens, now and later, plus everything else the role allows. In allow-all
+     mode those channels are read without a per-channel decision, so deny the
+     ones you don't want. Use only roles without moderation powers.
+   - Never give the bot Administrator, a moderator role, or an admin role.
+4. Keep the bot's own role below every role that guards a private channel.
 
-1. In the Discord Developer Portal, create an application with a bot.
-2. Turn on the Message Content intent. The Server Members intent is not needed.
-3. Invite the bot with only View Channels and Read Message History. Never Administrator.
-4. Place the bot's role below every role that guards a private channel.
-5. Give the bot role access to each allowlisted private channel.
+**2. Secrets in the macOS Keychain** (each command prompts you to paste the value)
 
-## Local live check (macOS)
+```sh
+security add-generic-password -s discord-mcp-bot -a "$USER" -w             # bot token
+security add-generic-password -s discord-mcp-discord-secret -a "$USER" -w  # Discord app client secret (C, D)
+security add-generic-password -s discord-mcp-oauth-secret -a "$USER" -w    # client secret you give Claude (C, D)
+security add-generic-password -s discord-mcp-encryption-key -a "$USER" -w  # token encryption key (C, D)
+```
 
-1. Store the token once: `security add-generic-password -s discord-mcp-bot -a "$USER" -w`
-2. Create `.env.local` (git-ignored) with `DISCORD_GUILD_ID`, `DEV_USER_ID`, `DIGEST_CONFIG=config.local.toml` and optionally `SERVER_NAME`.
-3. Create `config.local.toml` (git-ignored) with your test channel:
-   ```toml
-   allowlist = [ { id = "CHANNEL_ID", name = "test", phase = 1 } ]
-   deny = []
-   ```
-4. Have someone else ping you there. Your own messages never count.
-5. Run `scripts/with_keychain.sh .venv/bin/python -m scripts.live_check`
+Generate the last two with
+`python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"`.
+`scripts/with_keychain.sh` reads them at start-up, so they never sit in the
+repo, env files or shell history. (Claude Code and claude.ai each keep their
+own copy of the client secret once you give it to them.)
 
-## Local sign-in test (HTTP + Claude Code, macOS)
+**3. `config.local.toml`** (git-ignored; `config.toml` documents every setting)
 
-1. Discord Developer Portal → OAuth2 → Redirects: add `http://localhost:8000/oauth/discord/callback`.
-2. Store the Discord client secret, a generated `OAUTH_CLIENT_SECRET` and a generated `ENCRYPTION_KEY` in the Keychain (see `scripts/with_keychain.sh`).
-3. Create `.env.http.local` (git-ignored):
+Start with one test channel:
+
+```toml
+allowlist = [ { id = "CHANNEL_ID_1", name = "test", phase = 1 } ]
+deny = []
+```
+
+A fuller example, once you're ready to read more of the server:
+
+```toml
+allow_all_channels = false         # true reads every channel except deny_channels
+deny_channels = [
+  { id = "CATEGORY_OR_CHANNEL_ID", note = "leadership" },
+]
+allowlist = [
+  { id = "CHANNEL_ID_1", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] },
+  { id = "CHANNEL_ID_2", name = "leave", phase = 1, pings = "direct_only" },
+]
+deny = []
+```
+
+- Turn on `allow_all_channels` only with the server owner's agreement, and
+  deny private spaces (leadership, HR) first.
+- `deny_channels` takes channel, category or thread IDs and always wins.
+- `watch` adds words that mark a message as worth a look in the overview.
+- `pings = "direct_only"` is for broadcast channels (leave notices, social):
+  @here and role pings there count as announcements, not "needs you".
+- Config is read at start-up: restart the server after changing it.
+
+### B. Claude Code over stdio (no sign-in)
+
+Create `.env.local` (git-ignored):
+
+```sh
+DISCORD_GUILD_ID=...
+DEV_USER_ID=...            # your Discord user ID; you act as this person
+DIGEST_CONFIG=config.local.toml
+```
+
+Then add it to Claude Code (Claude's config stores only this command, not the token):
+
+```sh
+claude mcp add discord-mcp -- "$PWD/scripts/with_keychain.sh" "$PWD/.venv/bin/python" -m discord_mcp
+```
+
+For a quick check without Claude, `scripts/with_keychain.sh .venv/bin/python -m scripts.live_check`
+prints the IDs and reasons of your pings, never message text.
+
+### C. Claude Code over HTTP, with Discord sign-in
+
+1. Discord Developer Portal → OAuth2 → Redirects: add
+   `http://localhost:8000/oauth/discord/callback`.
+2. Create `.env.http.local` (git-ignored):
    ```sh
    DISCORD_GUILD_ID=...
    DIGEST_CONFIG=config.local.toml
@@ -91,18 +149,151 @@ Generate a key or client secret with:
    OAUTH_CLIENT_ID=claude-code-local
    OAUTH_REDIRECT_URIS=http://localhost:3118/callback
    ```
-4. Start the server: `ENV_FILE=.env.http.local scripts/with_keychain.sh .venv/bin/python -m discord_mcp`
-5. Add it to Claude Code (prompts for the client secret):
-   `claude mcp add --transport http discord-mcp-http http://localhost:8000/mcp --client-id claude-code-local --client-secret --callback-port 3118`
-6. In Claude Code, run `/mcp`, authenticate, and sign in with Discord.
+   The server listens on `127.0.0.1` by default. If Claude Code reports
+   `ECONNREFUSED` while the server is running, your `localhost` resolves to
+   IPv6: add `HOST=::1` (IPv6 loopback). Never use `HOST=::` or `0.0.0.0`,
+   which listen on every network interface and expose the server over plain
+   HTTP to your network.
+3. Start the server (leave it running; its terminal shows the audit lines):
+   ```sh
+   ENV_FILE=.env.http.local scripts/with_keychain.sh .venv/bin/python -m discord_mcp
+   ```
+4. Add it to Claude Code (prompts for the client secret):
+   ```sh
+   claude mcp add --transport http discord-mcp-http http://localhost:8000/mcp --client-id claude-code-local --client-secret --callback-port 3118
+   ```
+5. In Claude Code, run `/mcp`, authenticate, and sign in with Discord.
 
-## Use it in Claude Code (local, stdio)
+After a restart, sign-in codes and refresh tokens from before stop working,
+so Claude asks you to sign in again once its current access token (up to an
+hour) expires. A restart is not a way to cut access off immediately; changing
+`ENCRYPTION_KEY` is.
+
+### D. claude.ai through a Tailscale Funnel
+
+claude.ai connects to MCP servers from Anthropic's cloud, not from your
+browser, so `localhost` is not reachable. A tunnel gives your machine a public
+HTTPS address. Tailscale Funnel is recommended because the encryption ends on
+your machine: Tailscale cannot read the traffic, which carries message text.
+(ngrok and Cloudflare tunnels also work but decrypt traffic at their edge.)
+
+One-time:
+
+1. Install the Tailscale app and sign in. In the admin console, rename your
+   machine to something neutral (for example `discord-mcp`): the name is part
+   of the public address, and Funnel addresses appear in public certificate
+   logs.
+   The tailnet part of the address is published too, so avoid a tailnet name
+   that identifies you.
+2. Run `tailscale funnel 8000` once. If Funnel is off for your tailnet, it
+   prints a link: open it and enable Funnel (and HTTPS certificates). Once it
+   is enabled the command starts the tunnel in the foreground: stop it with
+   Ctrl-C for now.
+3. Note your address, `https://<machine>.<tailnet>.ts.net`.
+4. Discord Developer Portal → OAuth2 → Redirects: add
+   `https://<machine>.<tailnet>.ts.net/oauth/discord/callback`.
+5. Copy `.env.http.local` to `.env.funnel.local` and change two lines:
+   ```sh
+   PUBLIC_URL=https://<machine>.<tailnet>.ts.net
+   OAUTH_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
+   ```
+   (`ENV_FILE` is a path relative to the repo.)
+
+Each session, in one terminal, keep the Mac awake (on battery `-s` does not
+apply, so stay plugged in) and start the server:
 
 ```sh
-claude mcp add discord-mcp -- "$PWD/scripts/with_keychain.sh" "$PWD/.venv/bin/python" -m discord_mcp
+caffeinate -dis &
+ENV_FILE=.env.funnel.local scripts/with_keychain.sh .venv/bin/python -m discord_mcp
 ```
 
-Claude's config stores only this command, not the token.
+In a second terminal, open the tunnel:
+
+```sh
+tailscale funnel --bg 8000            # or: tailscale funnel --bg "http://[::1]:8000" if you set HOST=::1
+```
+
+Funnel must point at the address the server listens on; a mismatch gives a
+502.
+
+In claude.ai: Settings → Connectors → Add custom connector, URL
+`https://<machine>.<tailnet>.ts.net/mcp`. Authentication is detected as OAuth.
+Under the advanced settings give the client ID and client secret. The client
+ID is not secret: `grep '^OAUTH_CLIENT_ID=' .env.funnel.local`. Copy the
+secret without showing it on screen, paste it, then clear the clipboard:
+
+```sh
+security find-generic-password -s discord-mcp-oauth-secret -a "$USER" -w | tr -d '\n' | pbcopy
+# paste into claude.ai, then:
+pbcopy </dev/null
+```
+
+Then connect and sign in with Discord.
+
+When you're done:
+
+```sh
+tailscale funnel --https=443 off      # closes the public address
+# stop the server with Ctrl-C, and the caffeinate job with `kill %1`
+```
+
+While the tunnel is open the server is reachable from the internet. Everyone
+must still sign in with Discord and sees only what their own Discord access
+allows, but per-person rate limits are not built yet (stage 3), so keep the
+tunnel open only while testing. Closing the tunnel stops new requests; access
+tokens already issued stay valid for up to an hour if the server comes back
+with the same `ENCRYPTION_KEY`.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| Claude Code: `ECONNREFUSED` | Server not running, a typo in `PUBLIC_URL`, or `localhost` resolving to IPv6 (set `HOST=::1`) |
+| `/mcp` asks you to sign in again | The server restarted; this is expected |
+| `skipped_channels` above 0 | Channels you can see but the bot can't read: give the bot's role access, or deny them |
+| claude.ai: "Couldn't reach this address" | Funnel not running, pointing at a different address than the server listens on (502), or a brand-new address still spreading through DNS (wait about 10 minutes) |
+| claude.ai: connector stops responding | The tunnel dropped (sleep, Wi-Fi change). Check `tailscale funnel status` and whether calls appear in the server's audit lines |
+| Sign-in fails after Discord | The redirect for this `PUBLIC_URL` is missing in the Discord portal, or `OAUTH_REDIRECT_URIS` lacks the caller's callback |
+
+The server's only log output is one JSON audit line per call: user ID, tool,
+channel IDs, item count, duration and status. No message text. A call that
+never shows up there never reached the server.
+
+## Settings (environment variables only)
+
+| Variable | Mode | Meaning |
+| --- | --- | --- |
+| `DISCORD_BOT_TOKEN` | stdio + http | Bot token (secret) |
+| `DISCORD_GUILD_ID` | stdio + http | Your Discord server ID |
+| `DIGEST_CONFIG` | stdio + http | Config file path (default `config.toml`) |
+| `SERVER_NAME` | stdio + http | Name shown in Claude (default `discord-mcp`) |
+| `DEV_USER_ID` | stdio | Local testing as this Discord user, no sign-in. Refused with `PUBLIC_URL` |
+| `PUBLIC_URL` | http | The server's public address; https unless localhost |
+| `DISCORD_CLIENT_ID` | http | Discord application ID (for sign-in) |
+| `DISCORD_CLIENT_SECRET` | http | Discord application client secret (secret) |
+| `OAUTH_CLIENT_ID` | http | The client ID you give Claude |
+| `OAUTH_CLIENT_SECRET` | http | The client secret you give Claude (secret) |
+| `OAUTH_REDIRECT_URIS` | http | Comma-separated; default `https://claude.ai/api/mcp/auth_callback` |
+| `ENCRYPTION_KEY` | http | 32 random bytes, base64url (secret). Changing it signs everyone out |
+| `HOST`, `PORT` | http | Listen address (default `127.0.0.1:8000`; `::1` if `localhost` resolves to IPv6). Keep it a loopback address |
+
+## Contributing
+
+Read [CLAUDE.md](CLAUDE.md) first. In short:
+
+- Write the test first (red, then green), using `tests/fakes.py`.
+- Before every commit: the full suite passes, a code review and a security
+  review have run, their Critical and Important findings are fixed, and the
+  commit message says what they found.
+- Record major decisions in `docs/decisions.md` in the same commit.
+- This is a public repo: never commit real names, channel or guild IDs,
+  message text, `.env*` files or `config.local.toml`.
+- Error text shown to Claude is fixed text, never message content.
+
+## Deployment
+
+Not yet: hosting as a shared connector is stage 3, and this section will
+describe it.
 
 ## License
 
