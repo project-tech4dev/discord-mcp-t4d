@@ -272,3 +272,39 @@ def test_search_ignores_matches_before_the_window():
     results, count = search_results(topics, Words.build(["acme"]), ctx(), since=NOW - timedelta(days=30))
     assert count == 1
     assert [m["text"] for m in results[0]["matches"]] == ["acme update"]
+
+
+def test_fitting_measures_a_long_list_only_a_few_times(monkeypatch):
+    import discord_mcp.topics as topics
+
+    rows = busy(64)
+    calls = []
+    real = topics._size
+    monkeypatch.setattr(topics, "_size", lambda p: calls.append(1) or real(p))
+    out = fit_overview(rows, {"channel": "grants"}, 20000)
+    assert 0 < out["omitted"] < 64
+    assert len(calls) <= 10  # binary search, not one measurement per dropped row
+    assert real(out) <= 20000
+    # The fewest rows dropped: keeping one more would not fit.
+    one_more = sorted(rows, key=lambda r: r[0]["last_activity"], reverse=True)
+    one_more.sort(key=lambda r: not r[1])
+    kept = len(out["topics"])
+    bigger = out | {"topics": [r for r, _ in one_more[: kept + 1]], "omitted": out["omitted"] - 1}
+    assert real(bigger) > 20000
+
+
+def test_search_fitting_measures_a_long_list_only_a_few_times(monkeypatch):
+    import discord_mcp.topics as topics
+
+    msgs = [say(str(i + 1), 500 - i, text=f"budget {'x' * 300} {i}") for i in range(64)]
+    topics_ = build_topics(main(*msgs), [], {}, ctx(main_topic_gap_hours=0))
+    results, count = search_results(topics_, Words.build(["budget"]), ctx())
+    calls = []
+    real = topics._size
+    monkeypatch.setattr(topics, "_size", lambda p: calls.append(1) or real(p))
+    out = fit_search(results, {"match_count": count}, 5000)
+    assert out["truncated"] is True and 0 < len(out["results"]) < len(results)
+    assert len(calls) <= 10
+    assert real(out) <= 5000
+    newest = sorted(results, key=lambda r: r["matches"][0]["time"], reverse=True)
+    assert real(out | {"results": newest[: len(out["results"]) + 1]}) > 5000  # the fewest dropped

@@ -465,3 +465,31 @@ why it was made, and what was rejected.
   different things: one channel's threads, or every channel on the server),
   and re-exporting the errors from `digest.py` (callers now import them
   from `errors.py`).
+
+## 2026-11-15 — One direct-ping rule, fast fitting, limits in descriptions (refactor, phase 3)
+
+- **Decision:** four small fixes after the split.
+  - `matching.py` owns which pings are direct: `channel_ping` (role and
+    @here pings become "group" in a direct_only channel or its threads),
+    `is_quiet` and `is_direct`. get_my_pings and get_channel_overview
+    (`your_part`, `only_mine`) both use them, so they can no longer
+    disagree.
+  - `fit_overview` and `fit_search` use the binary search the brief and
+    open-loops budgets already used (`fewest_to_drop`), so a long list is measured about
+    log2(n) times instead of once per dropped row. Same result.
+  - Tool descriptions are built from the server's `Limits` and the named
+    defaults in `digest.py` (`SEARCH_DEFAULT_DAYS` and others), so a
+    configured limit is the number Claude sees; "unless configured
+    otherwise" is gone.
+  - `ToolResult` carries `item_count`, set by each tool, instead of
+    server.py guessing it from payload key names. Counts are unchanged.
+- **Why:** each was a second copy of a rule that had already drifted once
+  or could drift silently (a new payload key, a changed limit).
+- **Left as is:** the brief recipe in the server instructions still names
+  days=7, 14 and 30 (the defaults; a server configured with smaller maxima
+  would need its own recipe), and `fit_budget` / `trim_messages` still
+  drop one item at a time (their order and compact steps make a search
+  less simple).
+- **Rejected:** moving `RenderContext` out of `matching.py` (it is shared
+  by every view and has no better home yet), and counting deadlines as well
+  as channels in get_server_overview's item_count (kept as it was).

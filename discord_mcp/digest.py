@@ -13,11 +13,11 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from discord_mcp.access import Access
-from discord_mcp.config import Config
+from discord_mcp.config import Config, Limits
 from discord_mcp.conversations import fit_budget, group_conversations, render_full, render_row
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.errors import InputError, busy_or_denied, not_available, rate_limited_count
-from discord_mcp.matching import ChannelMessages, Identity
+from discord_mcp.matching import ChannelMessages, Identity, is_quiet
 from discord_mcp.messages import TEXT_TYPES, channel_name, content_messages, thread_label
 from discord_mcp.reader import Reader, ServerRead
 from discord_mcp.render import render_message
@@ -38,10 +38,20 @@ _THREAD_TOPIC = re.compile(r"^t:(\d+)$")
 _MAIN_TOPIC = re.compile(r"^m:(\d+)/(\d+)$")
 
 
+# Fixed defaults and caps not in Limits; tool descriptions in server.py read them from here.
+SEARCH_DEFAULT_DAYS = 14
+SEARCH_MAX_WORDS = 10
+LOOK_FOR_MAX_WORDS = 20
+SERVER_DEFAULT_DAYS = 7
+UPCOMING_DEFAULT_DAYS = 7
+UPCOMING_MAX_DAYS = 14
+
+
 @dataclass
 class ToolResult:
     payload: dict
     channel_ids: list[str]
+    item_count: int = 0  # rows, messages or channels returned, for the audit line
 
 
 def _with_rate_limited(base: dict, count: int) -> dict:
@@ -81,6 +91,10 @@ class Digest:
         self._access = Access(client, guild_id=guild_id, config=config, concurrency=concurrency)
         self._reader = Reader(client, self._access, guild_id=guild_id, config=config, concurrency=concurrency)
 
+    @property
+    def limits(self) -> Limits:
+        return self._limits
+
     async def resolve_identity(self, user_id: str) -> Identity:
         """Current roles for the person, read by the bot. Raises NotAMember if they left."""
         return await self._access.resolve_identity(user_id)
@@ -100,7 +114,7 @@ class Digest:
             }
             for c in view.visible
         ]
-        return ToolResult({"channels": out, "skipped_channels": view.skipped}, [c["id"] for c in view.visible])
+        return ToolResult({"channels": out, "skipped_channels": view.skipped}, [c["id"] for c in view.visible], len(out))
 
     async def get_my_pings(
         self, identity: Identity, days: int | None = None, channel_ids: list[str] | None = None
@@ -118,7 +132,7 @@ class Digest:
         )
         if read.capped:
             payload["truncated"] = True  # a fetch hit its cap, so older messages were not read
-        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched])
+        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched], len(payload["conversations"]))
 
     async def get_channel_messages(
         self, identity: Identity, channel_id: str, days: int | None = None, limit: int | None = None
@@ -144,6 +158,7 @@ class Digest:
             # more raw messages than the limit means older content may exist even if some were system messages
             {"messages": rendered, "truncated": len(content) > limit or len(cm.messages) > limit, "days": days},
             [channel_id],
+            len(rendered),
         )
 
     async def get_conversation(self, identity: Identity, link: str) -> ToolResult:
@@ -191,7 +206,8 @@ class Digest:
         ctx = self._reader.context(view)
         for conv in group_conversations(fetched, identity, ctx):
             if any(msg["id"] == message_id for msg in conv.messages):
-                return ToolResult(render_full(conv, ctx), [cm.channel["id"] for cm in fetched])
+                payload = render_full(conv, ctx)
+                return ToolResult(payload, [cm.channel["id"] for cm in fetched], len(payload["messages"]))
         # Not part of a ping conversation: open the thread, or the main-channel stretch, holding it.
         if channel_id in readable_threads:
             return await self._open_thread(identity, tool, channel_id, message_id)
@@ -212,7 +228,8 @@ class Digest:
         ctx = self._reader.context(view)
         topics = build_topics(None, fetched, {thread_id: starter} if starter else {}, ctx)
         if topics and (message_id is None or any(m["id"] == message_id for m in topics[0].messages)):
-            return ToolResult(render_topic(topics[0], ctx), [thread_id])
+            payload = render_topic(topics[0], ctx)
+            return ToolResult(payload, [thread_id], len(payload["messages"]))
         raise InputError(f"no conversation found for that link in the last {days} days")
 
     async def _open_main(
@@ -244,7 +261,8 @@ class Digest:
         ctx = self._reader.context(view)
         for t in build_topics(main, placeholders, {}, ctx):
             if t.kind == "main" and any(m["id"] == message_id for m in t.messages):
-                return ToolResult(render_topic(t, ctx), [channel_id])
+                payload = render_topic(t, ctx)
+                return ToolResult(payload, [channel_id], len(payload["messages"]))
         raise not_found
 
     # --- channel overview and search ----------------------------------------------
@@ -259,14 +277,14 @@ class Digest:
     ) -> ToolResult:
         tool = "get_channel_overview"
         days = _window(days, self._limits.default_days, self._limits.overview_max_days, "days")
-        look_for = _words(look_for or [], 20, "look_for")
+        look_for = _words(look_for or [], LOOK_FOR_MAX_WORDS, "look_for")
         read = await self._reader.channel_topics(identity, tool, channel_id, self._cutoff(days))
         parent = read.parent
         ctx = self._reader.context(read.view)
         entry = self._config.allowlist.get(channel_id)
         extra = Words.build([*(entry.watch if entry else ()), *look_for])
         now = self._clock()
-        quiet = parent["id"] in ctx.direct_only
+        quiet = is_quiet(parent, ctx)
         rows = [overview_row(t, identity, ctx, extra, now, quiet_channel=quiet) for t in read.topics]
         if only_mine:
             rows = [r for r in rows if r[0]["your_part"] != "none"]
@@ -278,16 +296,17 @@ class Digest:
             "truncated": read.capped,
         }
         base = _with_rate_limited(base, read.rate_limited)
-        return ToolResult(fit_overview(rows, base, self._limits.max_result_chars), read.channel_ids)
+        payload = fit_overview(rows, base, self._limits.max_result_chars)
+        return ToolResult(payload, read.channel_ids, len(payload["topics"]))
 
     async def search(
         self, identity: Identity, channel_id: str, words: list[str], days: int | None = None
     ) -> ToolResult:
         tool = "search"
-        days = _window(days, 14, self._limits.overview_max_days, "days")
-        words = _words(words, 10, "words")
+        days = _window(days, SEARCH_DEFAULT_DAYS, self._limits.overview_max_days, "days")
+        words = _words(words, SEARCH_MAX_WORDS, "words")
         if not words:
-            raise InputError("words must be a list of at most 10 words, each 2 to 40 characters")
+            raise InputError(f"words must be a list of at most {SEARCH_MAX_WORDS} words, each 2 to 40 characters")
         read = await self._reader.channel_topics(identity, tool, channel_id, self._cutoff(days))
         ctx = self._reader.context(read.view)
         results, count = search_results(read.topics, Words.build(words), ctx, since=read.cutoff)
@@ -299,7 +318,8 @@ class Digest:
             "truncated": read.capped,
         }
         base = _with_rate_limited(base, read.rate_limited)
-        return ToolResult(fit_search(results, base, self._limits.max_result_chars), read.channel_ids)
+        payload = fit_search(results, base, self._limits.max_result_chars)
+        return ToolResult(payload, read.channel_ids, len(payload["results"]))
 
     # --- server-wide brief ------------------------------------------------------
 
@@ -322,9 +342,9 @@ class Digest:
         """Last week's discussion across every readable channel, and deadlines coming up."""
         tool = "get_server_overview"
         top = self._limits.overview_max_days
-        days = _window(days, 7, top, "days")
+        days = _window(days, SERVER_DEFAULT_DAYS, top, "days")
         deadline_days = _window(deadline_days, top, top, "deadline_days")
-        upcoming_days = _window(upcoming_days, 7, 14, "upcoming_days")
+        upcoming_days = _window(upcoming_days, UPCOMING_DEFAULT_DAYS, UPCOMING_MAX_DAYS, "upcoming_days")
         now = self._clock()
         tz = ZoneInfo(self._config.timezone)
         read = await self._reader.read_server(identity, tool, now - timedelta(days=max(days, deadline_days)))
@@ -356,7 +376,7 @@ class Digest:
         payload = fit_server_overview(
             entries, deadlines[:cap], base, self._limits.max_result_chars, self._limits.brief_topics_per_channel
         )
-        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched])
+        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched], len(payload["channels"]))
 
     async def get_open_loops(self, identity: Identity, days: int | None = None) -> ToolResult:
         """Your promises not yet followed up, and what others owe you, across every readable channel."""
@@ -369,4 +389,5 @@ class Digest:
         base = _with_rate_limited(
             {"days": days, "skipped_channels": read.skipped, "truncated": read.capped}, read.rate_limited
         )
-        return ToolResult(fit_loops(found, base, self._limits.max_result_chars), [cm.channel["id"] for cm in read.fetched])
+        payload = fit_loops(found, base, self._limits.max_result_chars)
+        return ToolResult(payload, [cm.channel["id"] for cm in read.fetched], len(payload["loops"]))

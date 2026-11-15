@@ -67,12 +67,15 @@ async def test_all_tools_leave_no_message_text_in_logs(logs):
         await client.call_tool("list_my_channels", {})
         await client.call_tool("get_my_pings", {"days": 7})
         await client.call_tool("get_channel_messages", {"channel_id": "10"})
+        await client.call_tool("get_conversation", {"link": f"https://discord.com/channels/{GUILD_ID}/10/100"})
     out = logs.getvalue()
     assert SENTINEL not in out
     lines = [json.loads(line) for line in out.strip().splitlines()]
-    assert [line["tool"] for line in lines] == ["list_my_channels", "get_my_pings", "get_channel_messages"]
+    assert [line["tool"] for line in lines] == [
+        "list_my_channels", "get_my_pings", "get_channel_messages", "get_conversation"
+    ]
     assert all(line["status"] == "ok" and line["user_id"] == ME for line in lines)
-    assert lines[1]["item_count"] == 1
+    assert [line["item_count"] for line in lines] == [1, 1, 2, 2]
 
 
 async def test_unexpected_error_returns_generic_text_and_logs_type_only(logs):
@@ -201,7 +204,7 @@ async def test_pings_description_explains_compact():
     async with Client(build_server(make_digest(), me)) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
     assert "compact" in tools["get_my_pings"].description
-    assert "maximum 30" in tools["get_my_pings"].description
+    assert "(maximum 30)" in tools["get_my_pings"].description
 
 
 def test_brief_sections_are_pending_deadlines_nudges_then_last_week():
@@ -224,3 +227,39 @@ def test_instructions_explain_rate_limited_channels():
 
     assert "rate_limited_channels" in INSTRUCTIONS
     assert "incomplete" in INSTRUCTIONS
+
+
+async def test_descriptions_show_the_configured_limits():
+    c = FakeClient()
+    lim = Limits(
+        default_days=5, max_days=20, channel_default_days=2, channel_default_limit=40, channel_max_limit=90,
+        overview_max_days=21, brief_topics_per_channel=4,
+    )
+    cfg = Config(allowlist={}, deny=frozenset(), limits=lim)
+    digest = Digest(c, guild_id=GUILD_ID, config=cfg, clock=lambda: NOW)
+    async with Client(build_server(digest, me)) as client:
+        d = {t.name: t.description for t in (await client.list_tools()).tools}
+    assert "days defaults to 5 (maximum 20)" in d["get_my_pings"]
+    assert "days defaults to 2, limit defaults to 40 (maximum 90)" in d["get_channel_messages"]
+    assert "days defaults to 5 (maximum 21)" in d["get_channel_overview"]
+    assert "days defaults to 14 (maximum 21)" in d["search"]
+    assert "up to 4 top topics" in d["get_server_overview"]
+    assert "deadline_days to 21" in d["get_server_overview"]
+    assert "days defaults to 21 (maximum 21)" in d["get_open_loops"]
+    assert not any("unless configured otherwise" in text for text in d.values())
+
+
+async def test_audit_item_count_comes_from_the_tool_result(logs):
+    from discord_mcp.digest import ToolResult
+
+    digest = make_digest()
+
+    async def counted(identity):
+        # Both "messages" and "channels" keys: the count must not be guessed from key names.
+        return ToolResult({"messages": [1, 2], "channels": [1, 2, 3]}, ["10"], item_count=3)
+
+    digest.list_my_channels = counted
+    async with Client(build_server(digest, me)) as client:
+        await client.call_tool("list_my_channels", {})
+    line = json.loads(logs.getvalue().strip().splitlines()[-1])
+    assert line["item_count"] == 3
