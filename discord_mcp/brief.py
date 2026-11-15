@@ -12,6 +12,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from discord_mcp.conversations import _size, brief
+from discord_mcp.conversations import asks as _asks
 from discord_mcp.deadlines import find_deadlines
 from discord_mcp.matching import ChannelMessages, Identity, RenderContext, _display_name
 from discord_mcp.signals import Words, signals
@@ -187,20 +188,14 @@ def fit_server_overview(
 
 # --- open loops ---------------------------------------------------------------------
 
-ASK = re.compile(r"\?|\b(?:can you|could you|please|pls|any update|let me know|when will)\b", re.IGNORECASE)
-# A link, without trailing punctuation: "did you see https://x/doc?" is still a question.
-_LINK = re.compile(r"(?:https?://|www\.)[^\s<>]*[^\s<>?.,!)\]]", re.IGNORECASE)
-
-
-def _asks(text: str) -> bool:
-    """A question or ask phrase, ignoring links (a "?" in a URL's query string is not a question)."""
-    return bool(ASK.search(_LINK.sub(" ", text)))
 _APOS = "['\u2018\u2019\u02bc`]"
 # A first-person promise across 30 days of messages: stricter than get_my_pings' you_promised,
 # which only reads the last reply in a ping conversation. "will" alone ("that will work") or
-# "later"/"soon" are not promises here.
+# "later"/"soon" are not promises here, nor are refusals and absences ("I will not be able to",
+# "I'll be on leave").
+_NOT_A_PROMISE = r"(?!\s+not\b|\s+be\s+(?:on\s+leave|out|away|off|offline|unavailable|travell?ing)\b)"
 OWN_PROMISE = re.compile(
-    rf"\b(?:i{_APOS}ll|i\s+will|i{_APOS}?m\s+on\s+it|let\s+me(?!\s+know)|will\s+do"
+    rf"\b(?:(?:i{_APOS}ll|i\s+will){_NOT_A_PROMISE}|i{_APOS}?m\s+on\s+it|let\s+me(?!\s+know)|will\s+do"
     r"|will\s+(?:send|share|do|check|update|get\s+back|look|review|follow\s+up|circle\s+back|add|fix"
     r"|draft|prepare|reach\s+out|ping|call|confirm|post|upload|write|set\s+up|sort|schedule))\b"
     r"|^\s*on\s+it\b",
@@ -263,6 +258,8 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
         items.append((kind, when, row))
 
     for g in groups:
+        if g.channel["id"] in ctx.direct_only:
+            continue  # leave notices and social posts, as in deadline_items
         # One pass per channel group, so each check below is a dictionary lookup.
         latest_post: dict[str, datetime] = {}
         my_replies: set[str] = set()

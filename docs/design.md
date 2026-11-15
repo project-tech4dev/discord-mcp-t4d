@@ -82,6 +82,17 @@ replies into, else to the one with the most recent ping. @everyone and
 Each conversation is marked `needs_you` (no reply from the person yet),
 `reopened` (pinged again after their reply), `handled` (their last message
 is after the latest ping) or `announcement` (only @everyone, or `group` pings).
+Only pings that ask something count toward `needs_you` and `reopened`: a
+question, an ask phrase ("can u", "lmk", "any updates", "gentle reminder"),
+a question without "?" ("who can review", "are you free"), an opening
+imperative after an optional greeting ("hey, review this"), or a ping that
+is only mentions, tags, a link or a greeting. A later message from the same
+pinger counts too, so "Hi @you" followed by the ask still needs the person
+(before their reply for `needs_you`, after it for `reopened`); someone
+else's ask in the thread does not. A conversation whose direct pings ask
+nothing (a cc, thanks, a shoutout, a shared link, a leave notice) is `fyi`
+when the person has not replied; a non-asking ping after their reply leaves
+it `check` (`others_after_you`) rather than `reopened`.
 A conversation that would be handled is marked `check` instead when someone
 other than the person (not a bot) posted after their last reply
 (`others_after_you`), or their last reply is a promise such as "will", "let
@@ -89,7 +100,7 @@ me" or "EOD" (`you_promised`). Check rows carry the reasons and the newest
 message after the reply in `latest`. Handled and check rows carry the
 person's last reply so Claude can judge whether it closed the matter. The
 result has a size budget (40,000 characters by default): when it is over,
-oldest announcements, then oldest handled rows, then oldest check rows are
+oldest announcements, then oldest handled rows, then oldest fyi rows are
 dropped and counted in `omitted`. `get_conversation` opens one conversation in full.
 Design: `docs/superpowers/specs/2026-11-15-ping-conversations-design.md`.
 
@@ -153,8 +164,11 @@ its own 40K budget. Nothing is kept between calls.
   its threads), `promise_to_you` (someone promised the person and has posted
   nothing since), `stalled` (threads only: quiet for 3 days, ending on a
   question, ask or strong signal). Roles, @here and bots never owe a reply.
+  Broadcast (`direct_only`) channels and their threads give no loops (leave
+  notices and social posts). Refusals and absences ("I will not be able to",
+  "I'll be on leave") are not promises.
 - **Size:** `get_my_pings` has its own budget, `pings_max_chars` (default
-  40,000, at most 200,000). When over it, handled and announcement rows go
+  40,000, at most 200,000). When over it, announcement, handled and fyi rows go
   first; then the least urgent rows are shortened, one at a time and only as
   far as needed: texts cut (row `compact: 1`), then only the newest ping
   (`compact: 2`). Rows are dropped only when every kept row is as short as it
