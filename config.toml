@@ -21,12 +21,20 @@
 # channel overview (2-40 characters each, at most 30). Add words over time
 # when Claude misses something:
 #   { id = "123456789012345678", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] },
+#
+# Optional `pings = "direct_only"` for broadcast channels (leave notices,
+# social channels): @here and role pings there, and in their threads, count as
+# announcements, so only pings that name the person show as needing them. The
+# channel stays fully readable for the overview, search and messages. In
+# allowlist mode any entry, including one added only for `pings`, makes the
+# channel readable.
+#   { id = "123456789012345678", name = "leave", phase = 1, pings = "direct_only" },
 allowlist = []
 
 # ALLOW ALL CHANNELS (instead of the allowlist)
 # true: every text, announcement and forum channel the person can see is read,
 # except the channel deny list below. Channels the bot itself cannot read show
-# up as skipped. The allowlist then only supplies `watch` words. Leave false to
+# up as skipped. The allowlist then only supplies `watch` words and `pings` modes. Leave false to
 # roll out channel by channel. Unknown top-level settings are rejected, so a
 # misspelled deny list stops the server instead of being ignored.
 allow_all_channels = false

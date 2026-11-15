@@ -106,7 +106,8 @@ def build_server(
         description=(
             "Your Discord conversations that ping you (by name, a role you hold, @here, @everyone, or a "
             "reply to you), grouped and marked needs_you, reopened, handled or announcement, most urgent "
-            "first. days defaults to 7 (maximum 14). channel_ids optionally limits the channels." + UNTRUSTED
+            "first. Reason group is an @here or role ping in a broadcast channel, counted as an announcement. "
+            "days defaults to 7 (maximum 14). channel_ids optionally limits the channels." + UNTRUSTED
         ),
         annotations=READ_ONLY,
     )

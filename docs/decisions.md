@@ -145,3 +145,21 @@ why it was made, and what was rejected.
   - Deferred: a cap on total channels per `get_my_pings` call (add it if calls
     get slow), and checking the bot's own permissions (channels the bot can't
     read show up as skipped).
+
+## 2026-11-15 — Broadcast channels: `pings = "direct_only"`
+
+- **Problem:** once the bot could read every team channel, leave notices
+  ("@team out today") and blog shares filled `needs_you`, and most of those
+  rows were not asks.
+- **Decision:** a per-channel config setting, `pings = "direct_only"`. In those
+  channels and their threads, @here and role pings become reason `group` and
+  count as announcements. Pings that name the person, and replies to them,
+  still need the person. The channel stays readable for the overview, search
+  and messages, so "who is out next week?" still works.
+- **Rejected:** denying the channels (loses the leave and social questions);
+  treating every bot message as an announcement (people post their own
+  "@team I'm out" notices).
+- **Review outcomes:** a channel's category is not matched (only the channel
+  itself, or a thread's parent). Deferred: unknown keys inside an allowlist
+  entry are still ignored (a typo fails safe, as `all`), and the overview's
+  `your_part` still counts a `group` ping as `pinged`.

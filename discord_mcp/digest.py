@@ -331,6 +331,7 @@ class Digest:
             role_names=view.role_names,
             channel_names=view.readable_names,
             limits=self._limits,
+            direct_only=frozenset(c for c, e in self._config.allowlist.items() if e.pings == "direct_only"),
         )
 
     # --- tools ----------------------------------------------------------------

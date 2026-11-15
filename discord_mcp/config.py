@@ -13,6 +13,9 @@ class ConfigError(Exception):
     pass
 
 
+PING_MODES = ("all", "direct_only")
+
+
 @dataclass(frozen=True)
 class Limits:
     default_days: int = 7
@@ -46,6 +49,8 @@ class ChannelEntry:
     name: str | None
     phase: int
     watch: tuple[str, ...] = ()
+    # "direct_only": @here and role pings here are announcements; only pings naming the person need them.
+    pings: str = "all"
 
 
 @dataclass(frozen=True)
@@ -86,7 +91,10 @@ def load_config(path: str | Path) -> Config:
             watch = tuple(check_words(entry.get("watch", []), max_count=30, what="watch"))
         except ValueError as e:
             raise ConfigError(str(e)) from None
-        allowlist[cid] = ChannelEntry(id=cid, name=entry.get("name"), phase=phase, watch=watch)
+        pings = entry.get("pings", "all")
+        if pings not in PING_MODES:
+            raise ConfigError(f"pings must be one of {list(PING_MODES)}")
+        allowlist[cid] = ChannelEntry(id=cid, name=entry.get("name"), phase=phase, watch=watch, pings=pings)
 
     deny = frozenset(
         (_snowflake(d.get("user_id"), "deny user_id"), _snowflake(d.get("channel_id"), "deny channel_id"))

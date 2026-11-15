@@ -132,3 +132,22 @@ def test_misspelled_top_level_key_is_rejected(tmp_path):
     p.write_text('allow_all_channels = true\ndeny_channel = [ { id = "5" } ]\nallowlist = []\n')
     with pytest.raises(ConfigError, match="unknown settings"):
         load_config(p)
+
+
+def test_pings_mode_loads(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allowlist = [ { id = "10", phase = 1, pings = "direct_only" } ]\n')
+    assert load_config(p).allowlist["10"].pings == "direct_only"
+
+
+def test_pings_mode_defaults_to_all(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allowlist = [ { id = "10", phase = 1 } ]\n')
+    assert load_config(p).allowlist["10"].pings == "all"
+
+
+def test_unknown_pings_mode_is_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allowlist = [ { id = "10", phase = 1, pings = "direct" } ]\n')
+    with pytest.raises(ConfigError, match="pings must be one of"):
+        load_config(p)

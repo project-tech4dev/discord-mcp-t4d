@@ -25,7 +25,9 @@ from discord_mcp.matching import (
 )
 
 THREAD_TYPES = frozenset({10, 11, 12})
-BROADCAST = "everyone"  # the only ping reason not asked of the person directly
+# Ping reasons not asked of the person directly: @everyone anywhere, and @here or a role
+# ping ("group") in a direct_only channel.
+BROADCASTS = frozenset({"everyone", "group"})
 STATUS_ORDER = ("needs_you", "reopened", "handled", "announcement")
 
 Ping = tuple[dict, str, "str | None"]
@@ -64,10 +66,20 @@ def _content(cm: ChannelMessages) -> list[dict]:
     return [m for m in cm.messages if m.get("type") in CONTENT_TYPES]
 
 
-def _pings(messages: list[dict], identity: Identity, ctx: RenderContext) -> list[Ping]:
+def _hit(m: dict, cm: ChannelMessages, identity: Identity, ctx: RenderContext) -> tuple[str, str | None] | None:
+    """ping_reason, with @here and role pings downgraded to "group" in direct_only channels."""
+    hit = ping_reason(m, identity, ctx.role_names)
+    home = cm.channel.get("parent_id") if cm.channel.get("type") in THREAD_TYPES else cm.channel["id"]
+    quiet = home in ctx.direct_only or cm.channel["id"] in ctx.direct_only
+    if hit is not None and quiet and hit[0] in ("role", "here"):
+        return ("group", hit[1])
+    return hit
+
+
+def _pings(cm: ChannelMessages, messages: list[dict], identity: Identity, ctx: RenderContext) -> list[Ping]:
     out: list[Ping] = []
     for m in messages:
-        hit = ping_reason(m, identity, ctx.role_names)
+        hit = _hit(m, cm, identity, ctx)
         if hit is not None:
             out.append((m, hit[0], hit[1]))
     return out
@@ -119,7 +131,7 @@ def group_conversations(
     for cm in plains:
         open_: list[_Open] = []
         for m in _content(cm):
-            hit = ping_reason(m, identity, ctx.role_names)
+            hit = _hit(m, cm, identity, ctx)
             tid = (m.get("thread") or {}).get("id")
             if hit is not None and tid in threads:
                 started.add(tid)
@@ -129,18 +141,18 @@ def group_conversations(
                         channel_id=cm.channel["id"],
                         label=threads[tid].label,
                         messages=[m, *body],
-                        pings=[(m, hit[0], hit[1]), *_pings(body, identity, ctx)],
+                        pings=[(m, hit[0], hit[1]), *_pings(threads[tid], body, identity, ctx)],
                     )
                 )
                 continue
             target = _assign(m, open_, identity, ctx)
             if target is not None:
                 _add(target, m, hit)
-                if hit is not None and hit[0] != BROADCAST:
+                if hit is not None and hit[0] not in BROADCASTS:
                     target.participants |= _people(m) | {identity.user_id}
             elif hit is not None:
                 people = _people(m)
-                if hit[0] != BROADCAST:
+                if hit[0] not in BROADCASTS:
                     people.add(identity.user_id)
                 o = _Open(
                     conv=Conversation(channel_id=cm.channel["id"], label=cm.label, messages=[], pings=[]),
@@ -156,7 +168,7 @@ def group_conversations(
         if tid in started:
             continue
         body = _content(cm)
-        pings = _pings(body, identity, ctx)
+        pings = _pings(cm, body, identity, ctx)
         if pings:
             out.append(Conversation(channel_id=tid, label=cm.label, messages=body, pings=pings))
 
@@ -172,13 +184,13 @@ def _id(m: dict) -> int:
 
 
 def _mine_after_first_ping(conv: Conversation, identity: Identity) -> list[dict]:
-    direct = [p for p in conv.pings if p[1] != BROADCAST]
+    direct = [p for p in conv.pings if p[1] not in BROADCASTS]
     first = _id((direct or conv.pings)[0][0])
     return [m for m in conv.messages if _author(m) == identity.user_id and _id(m) > first]
 
 
 def status_of(conv: Conversation, identity: Identity) -> str:
-    direct = [p for p in conv.pings if p[1] != BROADCAST]
+    direct = [p for p in conv.pings if p[1] not in BROADCASTS]
     if not direct:
         return "announcement"
     mine = _mine_after_first_ping(conv, identity)

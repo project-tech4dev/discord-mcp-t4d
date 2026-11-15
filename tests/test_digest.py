@@ -686,3 +686,32 @@ async def test_denied_channel_is_not_named_in_mentions(client):
     text = p["conversations"][0]["pings"][0]["text"]
     assert "#secret" not in text
     assert "<#20>" in text and "#general" in text
+
+
+async def test_direct_only_channel_turns_role_pings_into_announcements():
+    c = FakeClient()
+    c.add_channel(channel("30", "leave"), [msg("300", "30", content="<@&R> out today", mention_roles=[ROLE_DEV], hours_ago=2)])
+    cfg = Config(
+        allowlist={"30": ChannelEntry(id="30", name=None, phase=1, pings="direct_only")},
+        deny=frozenset(),
+    )
+    payload = (await make(c, cfg).get_my_pings(IDENT)).payload
+    assert payload["counts"]["announcement"] == 1
+    assert payload["counts"]["needs_you"] == 0
+
+
+async def test_allow_all_direct_only_covers_threads_and_spares_other_channels(client):
+    client.add_channel(channel("30", "leave", parent_id="1"), [msg("300", "30", content="<@&R> out", mention_roles=[ROLE_DEV], hours_ago=2)])
+    t = channel("31", "trip", 11, parent_id="30", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("310", "31", content="<@&R> back monday", mention_roles=[ROLE_DEV], hours_ago=1)])
+    client.add_channel(channel("40", "dev", parent_id="1"), [msg("400", "40", content="<@&R> review", mention_roles=[ROLE_DEV], hours_ago=1)])
+    client.active_threads = [t]
+    cfg = Config(
+        allowlist={"30": ChannelEntry("30", None, 1, pings="direct_only")},
+        deny=frozenset(),
+        allow_all_channels=True,
+        deny_channels=frozenset({"10", "20"}),
+    )
+    convs = (await make(client, cfg).get_my_pings(IDENT)).payload["conversations"]
+    status = {c["id"].split("/")[0]: c["status"] for c in convs}
+    assert status == {"30": "announcement", "31": "announcement", "40": "needs_you"}

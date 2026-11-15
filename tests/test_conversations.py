@@ -383,3 +383,90 @@ def test_render_full_budget_never_drops_the_ping():
     conv = group(ChannelMessages(thread("50"), "general › topic", body))[0]
     got = [m["link"].rsplit("/", 1)[1] for m in render_full(conv, ctx(max_result_chars=20000))["messages"]]
     assert got[:2] == ["100", "110"]
+
+
+# --- direct_only channels ------------------------------------------------------
+
+
+def quiet_ctx() -> RenderContext:
+    return RenderContext(
+        guild_id=GUILD_ID, role_names={ROLE_DEV: "dev"}, channel_names={}, direct_only=frozenset({"10"})
+    )
+
+
+def quiet_group(*cms):
+    return group_conversations(list(cms), IDENT, quiet_ctx())
+
+
+def test_role_ping_in_direct_only_channel_is_an_announcement():
+    role = msg("100", "10", OTHER, "<@&R> I am out today", mention_roles=[ROLE_DEV], hours_ago=5)
+    [conv] = quiet_group(plain(role))
+    assert status_of(conv, IDENT) == "announcement"
+    assert conv.pings[0][1] == "group"
+    assert conv.pings[0][2] == "dev"
+
+
+def test_here_ping_in_direct_only_channel_is_an_announcement():
+    here = msg("100", "10", OTHER, "@here offline this afternoon", mention_everyone=True, hours_ago=5)
+    [conv] = quiet_group(plain(here))
+    assert status_of(conv, IDENT) == "announcement"
+
+
+def test_direct_mention_in_direct_only_channel_still_needs_me():
+    [conv] = quiet_group(plain(ping("100")))
+    assert status_of(conv, IDENT) == "needs_you"
+
+
+def test_role_ping_in_thread_of_direct_only_channel_is_an_announcement():
+    role = msg("51", "50", OTHER, "<@&R> heads up", mention_roles=[ROLE_DEV], hours_ago=5)
+    [conv] = quiet_group(ChannelMessages(thread("50"), "general › topic", [role]))
+    assert status_of(conv, IDENT) == "announcement"
+
+
+def test_role_ping_elsewhere_still_needs_me():
+    role = msg("100", "10", OTHER, "<@&R> please check", mention_roles=[ROLE_DEV], hours_ago=5)
+    assert status_of(one(role), IDENT) == "needs_you"
+
+
+def test_direct_only_applies_only_to_its_own_channel():
+    other = channel("11", "dev", parent_id="1")
+    quiet = msg("100", "10", OTHER, "<@&R> out today", mention_roles=[ROLE_DEV], hours_ago=5)
+    loud = msg("110", "11", OTHER, "<@&R> please check", mention_roles=[ROLE_DEV], hours_ago=4)
+    convs = quiet_group(plain(quiet), ChannelMessages(other, "dev", [loud]))
+    assert {c.channel_id: status_of(c, IDENT) for c in convs} == {"10": "announcement", "11": "needs_you"}
+
+
+def test_direct_only_on_a_category_does_not_quiet_its_channels():
+    ctx_ = RenderContext(guild_id=GUILD_ID, role_names={ROLE_DEV: "dev"}, channel_names={}, direct_only=frozenset({"1"}))
+    role = msg("100", "10", OTHER, "<@&R> please check", mention_roles=[ROLE_DEV], hours_ago=5)
+    [conv] = group_conversations([plain(role)], IDENT, ctx_)
+    assert status_of(conv, IDENT) == "needs_you"
+
+
+def test_here_and_reply_in_direct_only_channel():
+    here = msg("100", "10", OTHER, "@here offline", mention_everyone=True, hours_ago=5)
+    reply = say("101", OTHER, 4, referenced=say("90", ME, 6))
+    convs = quiet_group(plain(here, reply))
+    reasons = sorted(p[1] for c in convs for p in c.pings)
+    assert reasons == ["group", "reply"]
+
+
+def test_my_plain_message_does_not_join_a_group_ping_conversation():
+    role = msg("100", "10", OTHER, "<@&R> out today", mention_roles=[ROLE_DEV], hours_ago=5)
+    [conv] = quiet_group(plain(role, say("101", ME, 4)))
+    assert ids(conv) == ["100"]
+
+
+def test_group_ping_does_not_set_the_answer_point():
+    role = msg("100", "10", OTHER, "<@&R> out today", mention_roles=[ROLE_DEV], hours_ago=5)
+    reply = say("102", OTHER, 3, referenced=say("90", ME, 6))
+    mine = say("101", ME, 4, referenced=role)
+    [conv] = [c for c in quiet_group(plain(role, mine, reply)) if any(p[1] == "reply" for p in c.pings)]
+    assert status_of(conv, IDENT) == "needs_you"
+
+
+def test_second_group_ping_does_not_make_me_a_participant():
+    first = msg("100", "10", OTHER, "<@&R> out today", mention_roles=[ROLE_DEV], hours_ago=5)
+    second = msg("101", "10", OTHER, "<@&R> back at 3", mention_roles=[ROLE_DEV], hours_ago=4)
+    [conv] = quiet_group(plain(first, second, say("102", ME, 3)))
+    assert ids(conv) == ["100", "101"]

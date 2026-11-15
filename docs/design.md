@@ -63,6 +63,12 @@ A message pings a person when Discord's own fields show a mention of them, a
 mention of a role they hold, @everyone, @here, or a reply to one of their
 messages. Their own messages never count. Each ping carries a reason.
 
+A channel set to `pings = "direct_only"` in config (for leave notices or
+social channels) turns @here and role pings there, and in its threads (not in a category
+set this way), into
+reason `group`, which counts like @everyone. Pings that name the person, and
+replies to them, still count as direct.
+
 ## Conversations
 
 `get_my_pings` returns conversations, not raw pings. A thread is one
@@ -70,12 +76,12 @@ conversation. In a plain channel a conversation starts at a ping and follows
 the people: later messages join when they reply into it or come from the
 pinger, the person, or anyone the ping names, until a 12-hour quiet gap or
 24 hours after it started. A message that fits several goes to the one it
-replies into, else to the one with the most recent ping. @everyone
-conversations take the person's messages only by reply.
+replies into, else to the one with the most recent ping. @everyone and
+`group` conversations take the person's messages only by reply.
 
 Each conversation is marked `needs_you` (no reply from the person yet),
 `reopened` (pinged again after their reply), `handled` (their last message
-is after the latest ping) or `announcement` (only @everyone). Handled rows
+is after the latest ping) or `announcement` (only @everyone, or `group` pings). Handled rows
 carry the person's last reply so Claude can judge whether it closed the
 matter. The result has a size budget (40,000 characters by default): when
 it is over, oldest announcements, then oldest handled rows are dropped and

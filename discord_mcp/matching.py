@@ -32,6 +32,8 @@ class RenderContext:
     role_names: dict[str, str]
     channel_names: dict[str, str]
     limits: Limits = field(default_factory=Limits)
+    # Channels (and their threads) where @here and role pings count as announcements.
+    direct_only: frozenset[str] = frozenset()
 
 
 @dataclass
