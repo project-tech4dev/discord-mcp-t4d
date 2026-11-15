@@ -61,13 +61,16 @@ class TokenBox:
 class ReplayGuard:
     """Remembers used token IDs until they expire, so codes and refresh tokens work once.
 
-    Memory only. A restart forgets it, which only matters for tokens that were
-    already in flight, and those expire within minutes (codes) or are rotated.
+    Memory only, so a restart would forget which tokens were used. To keep
+    "works once" true, every code and refresh token carries this process's
+    random `boot` id, and tokens from an earlier process are refused: after a
+    restart, everyone signs in again. Access tokens (one hour) are not affected.
     """
 
     def __init__(self, *, clock: Callable[[], float] = time.time) -> None:
         self._seen: dict[str, float] = {}
         self._clock = clock
+        self.boot = secrets.token_urlsafe(12)
 
     def use(self, jti: str, exp: float) -> bool:
         now = self._clock()

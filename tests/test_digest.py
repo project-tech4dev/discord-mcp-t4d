@@ -531,3 +531,158 @@ async def test_overview_caps_threads_and_marks_truncated(client):
     assert p["counts"]["thread"] == 4
     assert p["truncated"] is True
     assert "messages:80" not in client.calls  # the oldest threads are not fetched
+
+
+# --- allow all channels, with a channel deny list ---------------------------------
+
+from discord_mcp.permissions import VIEW_CHANNEL  # noqa: E402
+
+
+def allow_all(*deny: str, **limits) -> Config:
+    return Config(
+        allowlist={}, deny=frozenset(), limits=Limits(**limits), allow_all_channels=True, deny_channels=frozenset(deny)
+    )
+
+
+async def test_allow_all_reads_every_visible_channel(client):
+    d = make(client, allow_all())
+    names = [c["name"] for c in (await d.list_my_channels(IDENT)).payload["channels"]]
+    assert sorted(names) == ["general", "secret"]
+    assert sorted(ping_ids((await d.get_my_pings(IDENT)).payload)) == ["100", "200"]
+
+
+async def test_denied_channel_is_never_read(client):
+    d = make(client, allow_all("20"))
+    assert [c["name"] for c in (await d.list_my_channels(IDENT)).payload["channels"]] == ["general"]
+    assert ping_ids((await d.get_my_pings(IDENT)).payload) == ["100"]
+    for call in (
+        d.get_channel_overview(IDENT, "20"),
+        d.search(IDENT, "20", ["hello"]),
+        d.get_channel_messages(IDENT, "20"),
+        d.get_conversation(IDENT, f"{LINK}/20/200"),
+        d.get_conversation(IDENT, "m:20/200"),
+    ):
+        with pytest.raises(AccessDenied):
+            await call
+    assert "messages:20" not in client.calls
+
+
+async def test_denied_category_denies_its_channels(client):
+    d = make(client, allow_all("1"))
+    assert [c["name"] for c in (await d.list_my_channels(IDENT)).payload["channels"]] == ["secret"]
+    with pytest.raises(AccessDenied):
+        await d.get_channel_overview(IDENT, "10")
+    assert "messages:10" not in client.calls
+
+
+async def test_threads_under_denied_channel_and_denied_threads_are_not_read(client):
+    t = channel("40", "deploy", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("400", "40", mentions=[user(ME)], hours_ago=3)])
+    u = channel("41", "other", 11, parent_id="20", thread_metadata={"archived": False})
+    client.add_channel(u, [msg("410", "41", mentions=[user(ME)], hours_ago=3)])
+    client.active_threads = [t, u]
+    await make(client, allow_all("10", "41")).get_my_pings(IDENT)
+    assert "messages:40" not in client.calls
+    assert "messages:41" not in client.calls
+    with pytest.raises(AccessDenied):
+        await make(client, allow_all("41")).get_conversation(IDENT, "t:41")
+
+
+async def test_allow_all_does_not_count_or_log_channels_the_person_cannot_see(client, caplog):
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    hidden = channel("30", "hidden", permission_overwrites=[{"id": GUILD_ID, "type": 0, "allow": "0", "deny": str(VIEW_CHANNEL)}])
+    client.add_channel(hidden, [msg("300", "30", mentions=[user(ME)], hours_ago=1)])
+    result = await make(client, allow_all()).get_my_pings(IDENT)
+    assert result.payload["skipped_channels"] == 0
+    assert "messages:30" not in client.calls
+    assert all("30" not in line["channel_ids"] for line in audit_lines(caplog))
+
+
+async def test_overview_works_for_channel_without_allowlist_entry(client):
+    p = (await make(client, allow_all()).get_channel_overview(IDENT, "20")).payload
+    assert p["channel"] == "secret"
+
+
+# --- thread started on its own (type 18 "thread created" message in the parent) ----
+
+
+async def test_thread_created_on_its_own_uses_its_oldest_message(client):
+    created = msg("7", "10", OTHER, "", hours_ago=900, mtype=18)
+    client.add_channel(channel("10", "general", parent_id="1"), [*client.messages["10"], created])
+    t = channel("7", "standalone", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("701", "7", OTHER, "real first post", hours_ago=899), msg("702", "7", THIRD, "recent", hours_ago=3)])
+    client.active_threads = [t]
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=30)).payload
+    row = next(r for r in p["topics"] if r["id"] == "t:7")
+    assert row["opening"]["text"] == "real first post"
+    assert "oldest:7" in client.calls
+
+
+# --- allow-all review fixes -----------------------------------------------------------
+
+from discord_mcp.discord_client import DiscordError  # noqa: E402
+
+
+async def test_allow_all_server_lookup_failure_is_an_error_not_an_empty_inbox(client):
+    client.fail_guild = 500
+    with pytest.raises(DiscordError):
+        await make(client, allow_all()).get_my_pings(IDENT)
+
+
+async def test_allow_all_private_thread_person_cannot_see_is_not_counted(client, caplog):
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    t = channel("43", "hush", 12, parent_id="10")
+    client.add_channel(t, [msg("430", "43", mentions=[user(ME)], hours_ago=1)])
+    client.active_threads = [t]
+    result = await make(client, allow_all()).get_my_pings(IDENT)
+    assert result.payload["skipped_channels"] == 0
+    assert all("43" not in line["channel_ids"] for line in audit_lines(caplog))
+
+
+async def test_allow_all_person_deny_on_hidden_channel_is_not_revealed(client, caplog):
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    hidden = channel("30", "hidden", permission_overwrites=[{"id": GUILD_ID, "type": 0, "allow": "0", "deny": str(VIEW_CHANNEL)}])
+    client.add_channel(hidden, [])
+    cfg = Config(allowlist={}, deny=frozenset({(ME, "30")}), limits=Limits(), allow_all_channels=True)
+    result = await make(client, cfg).get_my_pings(IDENT)
+    assert result.payload["skipped_channels"] == 0
+    assert all("30" not in line["channel_ids"] for line in audit_lines(caplog))
+
+
+async def test_deny_list_hit_has_its_own_audit_code(client, caplog):
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    await make(client, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits(), deny_channels=frozenset({"10"}))).get_my_pings(IDENT)
+    assert [line["status"] for line in audit_lines(caplog) if "10" in line["channel_ids"]][0] == "dropped:deny_list"
+
+
+async def test_allowlist_mode_with_denied_category(client):
+    cfg = Config(allowlist={"10": ChannelEntry("10", None, 1), "20": ChannelEntry("20", None, 1)}, deny=frozenset(), limits=Limits(), deny_channels=frozenset({"1"}))
+    result = await make(client, cfg).get_my_pings(IDENT)
+    assert ping_ids(result.payload) == ["200"]
+    assert "messages:10" not in client.calls
+
+
+async def test_opening_a_link_looks_up_only_its_own_channel(client):
+    for i in range(5):
+        client.add_channel(channel(str(60 + i), f"c{i}"), [])
+    await make(client, allow_all()).get_conversation(IDENT, f"{LINK}/10/100")
+    assert [c for c in client.calls if c.startswith("archived:")] == ["archived:10"]
+
+
+async def test_starter_404_falls_back_to_oldest(client):
+    t = channel("8", "solo", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("801", "8", OTHER, "first", hours_ago=900), msg("802", "8", THIRD, "now", hours_ago=2)])
+    client.active_threads = [t]
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=30)).payload
+    assert next(r for r in p["topics"] if r["id"] == "t:8")["opening"]["text"] == "first"
+    assert "message:10/8" in client.calls and "oldest:8" in client.calls
+
+
+async def test_denied_channel_is_not_named_in_mentions(client):
+    client.add_channel(channel("10", "general", parent_id="1"), [
+        msg("150", "10", OTHER, f"<@{ME}> see <#20> and <#10>", mentions=[user(ME)], hours_ago=1),
+    ])
+    p = (await make(client, allow_all("20")).get_my_pings(IDENT)).payload
+    text = p["conversations"][0]["pings"][0]["text"]
+    assert "#secret" not in text
+    assert "<#20>" in text and "#general" in text

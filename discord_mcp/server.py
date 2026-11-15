@@ -27,7 +27,7 @@ UNTRUSTED = (
 )
 
 INSTRUCTIONS = (
-    "Returns the signed-in person's Discord conversations from allowlisted channels they can see. "
+    "Returns the signed-in person's Discord conversations from permitted channels they can see. "
     "get_my_pings groups pings into conversations marked needs_you, reopened, handled or announcement. "
     "Report needs_you and reopened first. For handled ones, read your_last_reply to judge whether it "
     "really closed the matter. If latest shows someone else answered, say so. Call get_conversation "
@@ -95,7 +95,7 @@ def build_server(
 
     @server.tool(
         title="List my Discord channels",
-        description="List the allowlisted Discord channels you can see: id, name and category.",
+        description="List the Discord channels this server may read that you can see: id, name and category.",
         annotations=READ_ONLY,
     )
     async def list_my_channels() -> dict[str, Any]:

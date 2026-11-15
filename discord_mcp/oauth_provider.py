@@ -171,7 +171,7 @@ class SignInProvider:
 
         our_code = self._box.seal(
             "code",
-            {k: state[k] for k in ("cid", "ru", "rux", "cc", "sc")} | {"sub": user_id},
+            {k: state[k] for k in ("cid", "ru", "rux", "cc", "sc")} | {"sub": user_id, "bt": self._guard.boot},
             ttl=CODE_TTL,
         )
         audit.record(
@@ -190,7 +190,7 @@ class SignInProvider:
 
     async def load_authorization_code(self, client: OAuthClientInformationFull, authorization_code: str):
         p = self._box.open("code", authorization_code)
-        if p is None or p["cid"] != client.client_id:
+        if p is None or p["cid"] != client.client_id or not self._this_boot(p):
             return None
         return AuthorizationCode(
             code=authorization_code,
@@ -206,13 +206,13 @@ class SignInProvider:
 
     async def exchange_authorization_code(self, client: OAuthClientInformationFull, authorization_code) -> OAuthToken:
         p = self._box.open("code", authorization_code.code)
-        if p is None or not self._guard.use(p["jti"], p["exp"]):
+        if p is None or not self._this_boot(p) or not self._guard.use(p["jti"], p["exp"]):
             raise TokenError("invalid_grant", "code is invalid or already used")
         return self._issue(p["sub"], client.client_id, p["sc"], session_exp=int(self._clock()) + SESSION_TTL)
 
     async def load_refresh_token(self, client: OAuthClientInformationFull, refresh_token: str):
         p = self._box.open("refresh", refresh_token)
-        if p is None or p["cid"] != client.client_id:
+        if p is None or p["cid"] != client.client_id or not self._this_boot(p):
             return None
         return RefreshToken(
             token=refresh_token,
@@ -225,7 +225,7 @@ class SignInProvider:
 
     async def exchange_refresh_token(self, client: OAuthClientInformationFull, refresh_token, scopes) -> OAuthToken:
         p = self._box.open("refresh", refresh_token.token)
-        if p is None:
+        if p is None or not self._this_boot(p):
             raise TokenError("invalid_grant", "sign-in has expired")
         try:
             await self._check_member(p["sub"])
@@ -247,9 +247,14 @@ class SignInProvider:
             access_token=self._box.seal("access", body, ttl=access_ttl),
             token_type="Bearer",
             expires_in=access_ttl,
-            refresh_token=self._box.seal("refresh", body, exp=session_exp),
+            refresh_token=self._box.seal("refresh", body | {"bt": self._guard.boot}, exp=session_exp),
             scope=" ".join(scopes) or None,
         )
+
+    def _this_boot(self, payload: dict) -> bool:
+        """Codes and refresh tokens work once; that memory dies with the process, so so do they."""
+        bt = payload.get("bt")
+        return isinstance(bt, str) and hmac.compare_digest(bt.encode(), self._guard.boot.encode())
 
     # --- every MCP request -------------------------------------------------------------
 

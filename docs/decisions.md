@@ -92,6 +92,56 @@ why it was made, and what was rejected.
 - **Opened topics** are trimmed to the 40K budget, oldest first, always keeping
   the first message and the first ping.
 - **Refresh token reuse after a restart** (from the security review of the
-  stage-2 commit) is open and waiting for a decision. The options are signing
+  stage-2 commit) is open and waiting for a decision. Resolved below: sign in
+  again after every restart. The options are signing
   in again after each restart, a small token store, or deferring it to
   Stage 3.
+
+## 2026-11-15 — Allow all channels, with a channel deny list
+
+- **Decision:** a new `allow_all_channels = true` mode reads every text,
+  announcement and forum channel, except `deny_channels`. A denied entry can be
+  a channel, a category (which denies every channel inside it) or a thread. The
+  deny list wins in both modes and for every tool. The allowlist stays the
+  default mode and still supplies per-channel `watch` words.
+- **Why:** to get a whole-server view of what needs the person, without listing
+  every channel. Private spaces are excluded explicitly instead.
+- **Safeguards:**
+  - Discord permissions still apply to each person.
+  - In allow-all mode, channels a person can't see are skipped quietly and not
+    counted, so the result never reveals how many hidden channels exist.
+- **Trade-off:** `get_my_pings` reads every visible channel on each call, so it
+  gets slower as the server grows. Per-channel caps still apply. Add a
+  total-channel cap if it becomes slow.
+
+## 2026-11-15 — Sign in again after every restart
+
+- **Decision:** codes and refresh tokens carry the process's random boot id and
+  are refused after a restart.
+- **Why:** used tokens are remembered only in memory, so a restart would
+  otherwise let used refresh tokens work again for up to 30 days. This keeps
+  the no-database promise.
+- **Rejected:** a token store (SQLite or Redis), and deferring the fix to Stage 3.
+
+## 2026-11-15 — Thread starters: "thread created" messages
+
+- **Found on real data:** a thread created on its own leaves a type-18 "thread
+  created" system message in the parent, with the thread's id. That message was
+  taken as the starter, rejected, and the fallback never ran, so old threads
+  showed a mid-thread message as their opening.
+- **Fix:** if the parent message isn't a normal message, use the thread's oldest
+  message. On real Discord, `after=0&limit=1` returns the oldest message.
+- **Review outcomes (allow-all):**
+  - In allow-all mode, a failed server lookup fails the call instead of
+    returning "nothing needs you".
+  - Unknown top-level config settings are rejected, so a misspelled deny list
+    can't load as an empty one.
+  - Private threads, and per-person denies on channels a person can't see, are
+    skipped quietly.
+  - Denied channels are never named in `#channel` mentions.
+  - Deny-list hits have their own audit code (`dropped:deny_list`).
+  - Archived-thread lookups run in parallel, and opening a link looks up only
+    its own channel.
+  - Deferred: a cap on total channels per `get_my_pings` call (add it if calls
+    get slow), and checking the bot's own permissions (channels the bot can't
+    read show up as skipped).

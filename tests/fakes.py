@@ -133,6 +133,7 @@ class FakeClient:
         return self.active_threads
 
     async def get_public_archived_threads(self, channel_id: str, since: datetime) -> list[dict]:
+        self.calls.append(f"archived:{channel_id}")
         self._maybe_fail(channel_id)
         return self.archived_threads.get(channel_id, [])
 

@@ -7,7 +7,7 @@ channels the person can already see in Discord.
 ## Flow
 
 1. Claude calls a tool on behalf of a signed-in person.
-2. The server works out the person's roles and which allowlisted channels they can see.
+2. The server works out the person's roles and which permitted channels they can see.
 3. It fetches recent messages from those channels with a bot token, at the moment of the request.
 4. It returns the messages that ping the person. Claude does all sorting and summarising.
 
@@ -19,7 +19,12 @@ There is no database and no message history. Messages exist in memory only while
 - **No stored message text.** Nothing is written to disk, logs or outside services.
 - **Minimal logs.** Each line holds only user ID, tool name, channel IDs, item count, duration and status. Every other logger is silenced, and errors are reported by type only.
 - **Fail closed.** A channel that fails any lookup, returns 403, or has an unrecognised type is dropped from the result and its ID is logged.
-- **Two gates.** A channel must be on the allowlist and visible to the person under Discord's permission rules.
+- **Two gates.** A channel must be permitted by configuration and visible to the person under Discord's permission rules.
+  Configuration is either the allowlist (default) or, with `allow_all_channels = true`, every text,
+  announcement and forum channel. Either way the channel deny list wins: a denied channel, any channel
+  in a denied category, and any thread under a denied channel (or itself denied) is never read by any
+  tool, for anyone. In allow-all mode, channels a person cannot see are skipped quietly and never
+  counted, so results do not reveal how many hidden channels exist.
 - **Secrets from the environment only.**
 
 ## Sign-in
@@ -36,7 +41,10 @@ Discord does not support the registration methods MCP clients use.
   a sign-in lasts 30 days from first sign-in without sliding. Codes and refresh
   tokens work once. No token database exists; changing the key signs everyone out.
 - Run exactly one server process. Used codes and refresh tokens are remembered
-  in memory, so a second worker or replica would let them be reused.
+  in memory, so a second worker or replica would let them be reused. Codes and
+  refresh tokens also carry the process's random boot id, so after a restart
+  they stop working and everyone signs in again (access tokens still last
+  their hour).
 - Roles are read by the bot on every request, so losing a role or leaving the
   server takes effect immediately.
 

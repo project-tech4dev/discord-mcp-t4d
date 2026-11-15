@@ -2,8 +2,9 @@
 # environment variables.
 #
 # CHANNEL ALLOWLIST
-# The server reads only the channels listed here, and each person still only
-# sees the channels their Discord roles let them open.
+# Unless allow_all_channels (below) is true, the server reads only the channels
+# listed here, and each person still only sees the channels their Discord roles
+# let them open.
 #
 # The list starts empty on purpose.
 # Rollout begins with the common team channels and a pilot group. Internal team channels follow one team at a time,
@@ -21,6 +22,22 @@
 # when Claude misses something:
 #   { id = "123456789012345678", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] },
 allowlist = []
+
+# ALLOW ALL CHANNELS (instead of the allowlist)
+# true: every text, announcement and forum channel the person can see is read,
+# except the channel deny list below. Channels the bot itself cannot read show
+# up as skipped. The allowlist then only supplies `watch` words. Leave false to
+# roll out channel by channel. Unknown top-level settings are rejected, so a
+# misspelled deny list stops the server instead of being ignored.
+allow_all_channels = false
+
+# CHANNEL DENY LIST
+# Channels, categories (denies every channel inside) or threads that no tool
+# ever reads, for anyone, in either mode. Use it for leadership, HR and other
+# private spaces.
+# Example entry:
+#   { id = "123456789012345678", note = "leadership" },
+deny_channels = []
 
 # DENY LIST (use rarely)
 # Blocks one person from one channel even when their roles allow it. It is a

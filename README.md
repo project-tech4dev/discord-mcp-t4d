@@ -1,7 +1,8 @@
 # discord-mcp
 
 Read-only MCP server that gives each person their Discord pings from the last
-7 days, limited to allowlisted channels they can already see. It stores no
+7 days, limited to permitted channels they can already see (an allowlist, or
+every channel except a deny list). It stores no
 message text anywhere. See [docs/design.md](docs/design.md).
 
 **Status:** stage 2 of 3. Discord sign-in and the full permission check are
@@ -24,7 +25,7 @@ built. Runs locally; deployment as a remote connector is stage 3.
 | `discord_mcp/http_app.py` | Remote connector: Streamable HTTP with sign-in |
 | `discord_mcp/server.py` | The six MCP tools (`list_my_channels`, `get_my_pings`, `get_conversation`, `get_channel_overview`, `search`, `get_channel_messages`), all marked read-only |
 | `discord_mcp/audit.py` | The only log output: user ID, tool, channel IDs, count, duration, status |
-| `config.toml` | Allowlist (starts empty), deny list, limits |
+| `config.toml` | Allowlist (starts empty), allow-all mode, channel deny list, per-person deny list, limits |
 | `scripts/live_check.py` | Local check against real Discord; prints IDs and reasons, never text |
 | `scripts/with_keychain.sh` | Runs a command with the bot token from the macOS Keychain |
 

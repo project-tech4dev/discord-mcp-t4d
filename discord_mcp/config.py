@@ -53,6 +53,10 @@ class Config:
     allowlist: dict[str, ChannelEntry]
     deny: frozenset[tuple[str, str]]
     limits: Limits = field(default_factory=Limits)
+    # When true, every text, announcement and forum channel is a candidate, not only the allowlist.
+    allow_all_channels: bool = False
+    # Channels, categories or threads no tool ever reads, for anyone. Wins over everything.
+    deny_channels: frozenset[str] = frozenset()
 
 
 def _snowflake(value: object, what: str) -> str:
@@ -66,6 +70,11 @@ def load_config(path: str | Path) -> Config:
         raw = tomllib.loads(Path(path).read_text())
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"cannot read config file ({type(e).__name__})") from None
+
+    unknown_top = set(raw) - {"allowlist", "deny", "limits", "allow_all_channels", "deny_channels"}
+    if unknown_top:
+        # A misspelled deny list must never load as an empty one.
+        raise ConfigError(f"unknown settings: {sorted(unknown_top)}")
 
     allowlist: dict[str, ChannelEntry] = {}
     for entry in raw.get("allowlist", []):
@@ -92,4 +101,18 @@ def load_config(path: str | Path) -> Config:
     if not all(isinstance(v, int) and v > 0 for v in given.values()):
         raise ConfigError("limits must be positive integers")
 
-    return Config(allowlist=allowlist, deny=deny, limits=Limits(**given))
+    allow_all = raw.get("allow_all_channels", False)
+    if not isinstance(allow_all, bool):
+        raise ConfigError("allow_all_channels must be true or false")
+    deny_channels = raw.get("deny_channels", [])
+    if not isinstance(deny_channels, list) or not all(isinstance(d, dict) for d in deny_channels):
+        raise ConfigError("deny_channels must be a list of { id = \"...\" } entries")
+    denied = frozenset(_snowflake(d.get("id"), "deny_channels id") for d in deny_channels)
+
+    return Config(
+        allowlist=allowlist,
+        deny=deny,
+        limits=Limits(**given),
+        allow_all_channels=allow_all,
+        deny_channels=denied,
+    )

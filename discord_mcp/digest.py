@@ -1,10 +1,13 @@
 """Runs each tool request: works out channels, fetches messages, matches pings.
 
-A channel is returned only when it is on the allowlist, not on the deny list,
-and readable by the person under Discord's permission rules (permissions.py).
-Any channel that cannot be verified or read (lookup failure, 403, unknown
-channel type, unrecognised permission data, any unexpected error) is dropped
-from the result and its ID is logged. Nothing is kept after a request finishes.
+A channel is returned only when configuration permits it (the allowlist, or
+every channel when allow_all_channels is on), it is not on the channel deny
+list (itself, its category, or for threads their parent), the person is not
+denied it, and it is readable by the person under Discord's permission rules
+(permissions.py). In allowlist mode, any listed channel that cannot be verified
+or read is dropped and its ID is logged. In allow-all mode, channels a person
+cannot see are skipped quietly so their number is never revealed, and a
+failed server lookup fails the call instead of returning an empty result. Nothing is kept after a request finishes.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from discord_mcp.permissions import GuildSnapshot, can_read
 
 TEXT_TYPES = frozenset({0, 5})  # text, announcement
 FORUM_TYPES = frozenset({15})  # messages live only in its threads
+READABLE_TYPES = TEXT_TYPES | FORUM_TYPES
 THREAD_TYPES = frozenset({10, 11, 12})
 PRIVATE_THREAD = 12
 DISCORD_EPOCH_MS = 1420070400000
@@ -40,7 +44,7 @@ class InputError(ValueError):
 
 
 class AccessDenied(PermissionError):
-    """The channel is not on the allowlist or not visible to the person."""
+    """The channel is not permitted by configuration, is denied, or is not visible to the person."""
 
 
 class NotAMember(PermissionError):
@@ -61,7 +65,7 @@ class _View:
     channels: dict[str, dict]  # every guild channel by ID (structure only; never shown as-is)
     role_names: dict[str, str]
     readable_names: dict[str, str]  # names of channels this person can read, for <#id> mentions
-    visible: list[dict]  # allowlisted channels the person can read
+    visible: list[dict]  # permitted channels the person can read
     skipped: int
 
 
@@ -145,7 +149,19 @@ class Digest:
         except Exception:
             return False  # UnrecognisedCase or malformed data: fail closed
 
+    def _denied(self, channel: dict) -> bool:
+        """On the channel deny list itself, or inside a denied category."""
+        d = self._config.deny_channels
+        return channel.get("id") in d or channel.get("parent_id") in d
+
+    def _may_read(self, channel_id: str) -> bool:
+        """The configuration allows this channel id at all (deny list first, then allow-all or allowlist)."""
+        if channel_id in self._config.deny_channels:
+            return False
+        return self._config.allow_all_channels or channel_id in self._config.allowlist
+
     async def _view(self, identity: Identity, tool: str, wanted: list[str] | None) -> _View:
+        allow_all = self._config.allow_all_channels
         ids = [c for c in self._config.allowlist if wanted is None or c in wanted]
         try:
             guild_info, roles, guild_channels = await asyncio.gather(
@@ -161,21 +177,37 @@ class Digest:
             channels = {c["id"]: c for c in guild_channels}
             role_names = {r["id"]: r["name"] for r in roles if r["id"] != self._guild_id}
         except Exception as e:
+            if allow_all:
+                # With no fixed channel list there is nothing to report as skipped, and an
+                # empty result would look like "nothing needs you". Fail the call instead.
+                raise e if isinstance(e, DiscordError) else DiscordError(None) from None
             code = f"guild_{e.code}" if isinstance(e, DiscordError) else "guild_unexpected"
             for cid in ids:
                 self._drop(identity, tool, cid, code)
             empty = GuildSnapshot(self._guild_id, "", {})
             return _View(empty, {}, {}, {}, [], len(ids))
 
+        if allow_all:
+            # Every channel that can hold messages; unreadable or denied ones are skipped quietly,
+            # so the result never reveals how many channels a person cannot see.
+            ids = [
+                cid
+                for cid, c in channels.items()
+                if c.get("type") in READABLE_TYPES and (wanted is None or cid in wanted)
+            ]
         visible: list[dict] = []
         skipped = 0
         for cid in ids:
             ch = channels.get(cid)
+            if allow_all and (self._denied(ch) or not self._readable(snapshot, identity, ch)):
+                continue  # quietly: never reveal hidden or denied channels by count or log line
             code = None
             if ch is None:
                 code = "not_found"
-            elif ch.get("type") not in TEXT_TYPES | FORUM_TYPES:
+            elif ch.get("type") not in READABLE_TYPES:
                 code = "unknown_type"
+            elif self._denied(ch):
+                code = "deny_list"
             elif (identity.user_id, cid) in self._config.deny:
                 code = "denied"
             elif not self._readable(snapshot, identity, ch):
@@ -188,7 +220,10 @@ class Digest:
         readable_names = {
             cid: c.get("name", cid)
             for cid, c in channels.items()
-            if c.get("type") in TEXT_TYPES | FORUM_TYPES and self._readable(snapshot, identity, c)
+            if c.get("type") in READABLE_TYPES
+            and not self._denied(c)
+            and (identity.user_id, cid) not in self._config.deny
+            and self._readable(snapshot, identity, c)
         }
         return _View(snapshot, channels, role_names, readable_names, visible, skipped)
 
@@ -209,20 +244,29 @@ class Digest:
                     found[t["id"]] = t
         except DiscordError as e:
             failed = {pid: f"threads_{e.code}" for pid in parents}
-        for pid in parents:
-            if pid in failed:
-                continue
-            try:
-                for t in await self._client.get_public_archived_threads(pid, cutoff):
+        sem = asyncio.Semaphore(self._concurrency)
+
+        async def archived(pid: str) -> tuple[str, list[dict] | str]:
+            async with sem:
+                try:
+                    return pid, await self._client.get_public_archived_threads(pid, cutoff)
+                except DiscordError as e:
+                    return pid, e.code
+
+        for pid, got in await asyncio.gather(*(archived(p) for p in parents if p not in failed)):
+            if isinstance(got, str):
+                failed[pid] = got
+            else:
+                for t in got:
                     found.setdefault(t["id"], t)
-            except DiscordError as e:
-                failed[pid] = e.code
         for pid, code in failed.items():
             self._drop(identity, tool, pid, code)
 
         threads: list[dict] = []
         skipped = 0
         for t in found.values():
+            if t["id"] in self._config.deny_channels:
+                continue  # a denied thread is never read and never mentioned
             pid = t.get("parent_id")
             if pid in failed:
                 continue
@@ -245,6 +289,8 @@ class Digest:
                     view.guild, identity, parents[pid], thread=t, is_thread_member=member
                 ):
                     code = "no_access"
+            if code == "no_access" and self._config.allow_all_channels:
+                continue  # quietly, as for channels: never reveal private threads by count or log line
             if code:
                 self._drop(identity, tool, t["id"], code)
                 skipped += 1
@@ -332,7 +378,7 @@ class Digest:
         limit = self._limits.channel_default_limit if limit is None else limit
         if not isinstance(limit, int) or not 1 <= limit <= self._limits.channel_max_limit:
             raise InputError(f"limit must be between 1 and {self._limits.channel_max_limit}")
-        if channel_id not in self._config.allowlist:
+        if not self._may_read(channel_id):
             raise AccessDenied("channel is not available")
 
         view = await self._view(identity, tool, [channel_id])
@@ -371,7 +417,15 @@ class Digest:
 
         days = self._limits.max_days
         cutoff = self._clock() - timedelta(days=days)
-        view = await self._view(identity, tool, None)
+        # Look up only the link's own channel (or a thread's parent), not every channel on the server.
+        try:
+            meta = await self._client.get_channel(channel_id)
+        except DiscordError:
+            raise AccessDenied("channel is not available") from None
+        home = meta.get("parent_id") if meta.get("type") in THREAD_TYPES else channel_id
+        if not home or not self._may_read(home):
+            raise AccessDenied("channel is not available")
+        view = await self._view(identity, tool, [home])
         visible = {c["id"]: c for c in view.visible}
         threads, failed, _ = await self._threads(identity, tool, view, cutoff)
         readable_threads = {t["id"]: t for t in threads}
@@ -405,7 +459,7 @@ class Digest:
         except DiscordError:
             raise AccessDenied("channel is not available") from None
         parent_id = meta.get("parent_id")
-        if meta.get("type") not in THREAD_TYPES or parent_id not in self._config.allowlist:
+        if meta.get("type") not in THREAD_TYPES or not self._may_read(parent_id) or thread_id in self._config.deny_channels:
             raise AccessDenied("channel is not available")
         view = await self._view(identity, tool, [parent_id])
         if not view.visible:
@@ -425,6 +479,10 @@ class Digest:
             except DiscordError as e:
                 if e.status != 404:
                     raise
+                first = None
+            # A thread created on its own leaves a "thread created" system message (type 18)
+            # with the thread's id in the parent; its real first post is the thread's oldest message.
+            if first is None or first.get("type") not in CONTENT_TYPES:
                 first = await self._client.get_oldest_message(thread_id)
         except DiscordError:
             return None  # the topic still works without its starter
@@ -456,7 +514,7 @@ class Digest:
         exactly the stretch the overview row showed, whatever window the overview used.
         """
         days = self._limits.overview_max_days
-        if channel_id not in self._config.allowlist:
+        if not self._may_read(channel_id):
             raise AccessDenied("channel is not available")
         view = await self._view(identity, tool, [channel_id])
         if not view.visible:
@@ -489,7 +547,7 @@ class Digest:
         self, identity: Identity, tool: str, channel_id: str, days: int
     ) -> tuple[_View, dict, list[Topic], bool, list[str]]:
         """Topics in one channel and its threads. Raises AccessDenied before any message is fetched."""
-        if channel_id not in self._config.allowlist:
+        if not self._may_read(channel_id):
             raise AccessDenied("channel is not available")
         view = await self._view(identity, tool, [channel_id])
         if not view.visible:
@@ -554,7 +612,8 @@ class Digest:
         look_for = self._words(look_for or [], 20, "look_for")
         view, parent, topics, capped, fetched = await self._channel_topics(identity, tool, channel_id, days)
         ctx = self._context(view)
-        extra = Words.build([*self._config.allowlist[channel_id].watch, *look_for])
+        entry = self._config.allowlist.get(channel_id)
+        extra = Words.build([*(entry.watch if entry else ()), *look_for])
         now = self._clock()
         rows = [overview_row(t, identity, ctx, extra, now) for t in topics]
         if only_mine:

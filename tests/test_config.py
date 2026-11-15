@@ -101,3 +101,34 @@ def test_overview_limits_defaults(tmp_path):
         lim.overview_max_days, lim.overview_latest, lim.overview_key_messages, lim.opening_chars,
         lim.main_topic_gap_hours, lim.main_topic_max_hours, lim.search_matches_per_topic, lim.overview_max_messages,
     ) == (30, 2, 2, 300, 24, 72, 5, 3000)
+
+
+def test_allow_all_and_deny_channels_load(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allow_all_channels = true\ndeny_channels = [ { id = "5", note = "leadership" }, { id = "6" } ]\nallowlist = []\n')
+    cfg = load_config(p)
+    assert cfg.allow_all_channels is True
+    assert cfg.deny_channels == frozenset({"5", "6"})
+
+
+def test_allow_all_defaults_off(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("allowlist = []\n")
+    cfg = load_config(p)
+    assert cfg.allow_all_channels is False
+    assert cfg.deny_channels == frozenset()
+
+
+@pytest.mark.parametrize("text", ['allow_all_channels = "yes"\n', 'deny_channels = [ { id = "abc" } ]\n', 'deny_channels = ["5"]\n'])
+def test_allow_all_and_deny_channels_reject_bad_values(tmp_path, text):
+    p = tmp_path / "c.toml"
+    p.write_text(text + "allowlist = []\n")
+    with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_misspelled_top_level_key_is_rejected(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allow_all_channels = true\ndeny_channel = [ { id = "5" } ]\nallowlist = []\n')
+    with pytest.raises(ConfigError, match="unknown settings"):
+        load_config(p)

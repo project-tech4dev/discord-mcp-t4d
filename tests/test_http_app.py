@@ -435,3 +435,27 @@ def test_token_basic_auth_conflicting_with_form_client_id_is_refused(env):
 def test_metadata_advertises_both_secret_methods(env):
     meta = env.client.get("/.well-known/oauth-authorization-server").json()
     assert set(meta["token_endpoint_auth_methods_supported"]) == {"client_secret_post", "client_secret_basic"}
+
+
+def test_restart_signs_everyone_in_again(env):
+    """Used refresh tokens are remembered in memory only, so after a restart old ones must not work."""
+    tokens = sign_in(env.client)
+    digest = Digest(env.discord, guild_id=GUILD_ID, config=Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits()), clock=lambda: NOW)
+    restarted = build_http_app(load_settings(ENV), digest, env.oauth, clock=env.clock)
+    with TestClient(restarted, base_url=PUBLIC, follow_redirects=False) as client:
+        resp = token_request(client, grant_type="refresh_token", refresh_token=tokens["refresh_token"])
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_grant"
+        again = sign_in(client)
+        assert token_request(client, grant_type="refresh_token", refresh_token=again["refresh_token"]).status_code == 200
+
+
+def test_code_from_before_restart_is_rejected(env):
+    verifier, challenge = pkce()
+    cb = start_and_callback(env.client, authorize(env.client, challenge))
+    code = dict(p.split("=", 1) for p in cb.headers["location"].split("?", 1)[1].split("&"))["code"]
+    digest = Digest(env.discord, guild_id=GUILD_ID, config=Config(allowlist={}, deny=frozenset(), limits=Limits()), clock=lambda: NOW)
+    restarted = build_http_app(load_settings(ENV), digest, env.oauth, clock=env.clock)
+    with TestClient(restarted, base_url=PUBLIC, follow_redirects=False) as client:
+        resp = token_request(client, grant_type="authorization_code", code=code, redirect_uri=CALLBACK, code_verifier=verifier, resource=RESOURCE)
+        assert resp.status_code == 400
