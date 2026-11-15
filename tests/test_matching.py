@@ -148,3 +148,34 @@ def test_render_reply_carries_first_200_chars_of_original():
     orig = msg("1", "10", author_id=ME, content="q" * 500)
     out = render_message(msg("2", "10", referenced=orig), "general", ctx())
     assert out["reply_to"] == "q" * 200
+
+
+# --- direct pings (shared by get_my_pings and get_channel_overview) -------------------
+
+from discord_mcp.matching import channel_ping, is_direct, is_quiet  # noqa: E402
+
+
+def quiet_ctx(*quiet_ids) -> RenderContext:
+    return RenderContext(GUILD_ID, ROLE_NAMES, {}, Limits(), direct_only=frozenset(quiet_ids))
+
+
+def test_role_and_here_pings_become_group_in_a_quiet_channel():
+    role = msg("1", "10", content=f"<@&{ROLE_DEV}> deploy", mention_roles=[ROLE_DEV])
+    here = msg("2", "10", content="@here lunch", mention_everyone=True)
+    assert channel_ping(role, IDENT, ctx(), quiet=True) == ("group", "dev")
+    assert channel_ping(here, IDENT, ctx(), quiet=True) == ("group", None)
+    assert channel_ping(role, IDENT, ctx(), quiet=False) == ("role", "dev")
+    everyone = msg("3", "10", content="@everyone party", mention_everyone=True)
+    assert channel_ping(everyone, IDENT, ctx(), quiet=True) == ("everyone", None)
+
+
+def test_only_named_reply_and_loud_group_pings_are_direct():
+    assert is_direct("mention") and is_direct("reply") and is_direct("role") and is_direct("here")
+    assert not is_direct("everyone") and not is_direct("group")
+
+
+def test_a_thread_is_quiet_when_its_parent_is_direct_only():
+    th = channel("11", "plan", 11, parent_id="10")
+    assert is_quiet(th, quiet_ctx("10"))
+    assert is_quiet(CH, quiet_ctx("10"))
+    assert not is_quiet(CH, quiet_ctx("20"))
