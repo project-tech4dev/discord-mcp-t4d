@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from discord_mcp.budget import size as _size
-from discord_mcp.budget import trim_messages
-from discord_mcp.matching import ChannelMessages, Identity, RenderContext, ping_reason
+from discord_mcp.budget import fewest_to_drop, trim_messages
+from discord_mcp.matching import ChannelMessages, Identity, RenderContext, channel_ping, is_direct
 from discord_mcp.messages import author_id as _author
 from discord_mcp.messages import content_messages, thread_title
 from discord_mcp.messages import time_of as _time
@@ -116,10 +116,9 @@ def overview_row(
         name = display_name(m.get("author", {}))
         if name not in people:
             people.append(name)
-        hit = ping_reason(m, identity, ctx.role_names)
         # Like get_my_pings: @everyone, and @here or role pings in a direct_only channel, don't count.
-        direct = hit is not None and hit[0] != "everyone" and not (quiet_channel and hit[0] in ("role", "here"))
-        pinged = pinged or direct
+        hit = channel_ping(m, identity, ctx, quiet=quiet_channel)
+        pinged = pinged or (hit is not None and is_direct(hit[0]))
     part = {(True, True): "pinged_and_posted", (True, False): "pinged", (False, True): "posted"}.get(
         (pinged, posted), "none"
     )
@@ -153,17 +152,13 @@ def fit_overview(rows: list[tuple[dict, bool]], base: dict, max_chars: int) -> d
 
     def payload(omitted: int) -> dict:
         return base | {
-            "topics": kept,
+            "topics": kept[: len(kept) - omitted],
             "counts": counts,
             "omitted": omitted,
             "truncated": capped or omitted > 0,
         }
 
-    omitted = 0
-    while kept and _size(payload(omitted)) > max_chars:
-        kept.pop()
-        omitted += 1
-    return payload(omitted)
+    return payload(fewest_to_drop(len(kept), lambda n: _size(payload(n)) <= max_chars))
 
 
 # --- search ------------------------------------------------------------------------
@@ -208,16 +203,13 @@ def search_results(
 
 
 def fit_search(results: list[dict], base: dict, max_chars: int) -> dict:
+    """Newest match first; drop the oldest results until it fits."""
     kept = sorted(results, key=lambda r: r["matches"][0]["time"], reverse=True)
 
-    def payload(dropped: bool) -> dict:
-        return base | {"results": kept, "truncated": bool(base.get("truncated")) or dropped}
+    def payload(dropped: int) -> dict:
+        return base | {"results": kept[: len(kept) - dropped], "truncated": bool(base.get("truncated")) or dropped > 0}
 
-    dropped = False
-    while kept and _size(payload(dropped)) > max_chars:
-        kept.pop()
-        dropped = True
-    return payload(dropped)
+    return payload(fewest_to_drop(len(kept), lambda n: _size(payload(n)) <= max_chars))
 
 
 # --- one topic in full ----------------------------------------------------------------

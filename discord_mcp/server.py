@@ -15,7 +15,16 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from discord_mcp import audit
-from discord_mcp.digest import Digest, ToolResult
+from discord_mcp.digest import (
+    LOOK_FOR_MAX_WORDS,
+    SEARCH_DEFAULT_DAYS,
+    SEARCH_MAX_WORDS,
+    SERVER_DEFAULT_DAYS,
+    UPCOMING_DEFAULT_DAYS,
+    UPCOMING_MAX_DAYS,
+    Digest,
+    ToolResult,
+)
 from discord_mcp.errors import AccessDenied, InputError, NotAMember
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.matching import Identity
@@ -74,6 +83,7 @@ def build_server(
     auth=None,
 ) -> MCPServer:
     server = MCPServer(name=name, instructions=INSTRUCTIONS, auth_server_provider=auth_server_provider, auth=auth)
+    lim = digest.limits  # descriptions show the limits this server enforces
 
     async def run(tool: str, call: Callable[[Identity], Awaitable[ToolResult]]) -> dict[str, Any]:
         start = time.monotonic()
@@ -94,19 +104,11 @@ def build_server(
         except Exception as e:
             status, message = f"error:{type(e).__name__}", "Internal error. The server log has the details."
         else:
-            items = next(
-                (
-                    result.payload[k]
-                    for k in ("conversations", "topics", "results", "messages", "channels", "loops")
-                    if k in result.payload
-                ),
-                [],
-            )
             audit.record(
                 user_id=user_id,
                 tool=tool,
                 channel_ids=result.channel_ids,
-                item_count=len(items),
+                item_count=result.item_count,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 status="ok",
             )
@@ -137,7 +139,7 @@ def build_server(
             "urgent first. check means you replied but someone carried on after you or your reply was "
             "a promise. fyi means you were pinged but nothing was asked of you. Reason group is an @here or role ping in a broadcast channel, counted as an "
             "announcement. "
-            "days defaults to 7 (maximum 30 unless configured otherwise). If compact is true, some rows were shortened to fit, least urgent first; "
+            f"days defaults to {lim.default_days} (maximum {lim.max_days}). If compact is true, some rows were shortened to fit, least urgent first; "
             "each shortened row carries compact 1 (texts cut) or 2 (only the newest ping); open "
             "a row with get_conversation for the full text. channel_ids optionally limits the channels."
             + UNTRUSTED
@@ -151,7 +153,8 @@ def build_server(
         title="Get recent channel messages",
         description=(
             "Recent messages from one channel you can see, newest first, for follow-up questions. "
-            "days defaults to 3, limit defaults to 100 (maximum 300)." + UNTRUSTED
+            f"days defaults to {lim.channel_default_days}, limit defaults to {lim.channel_default_limit} "
+            f"(maximum {lim.channel_max_limit})." + UNTRUSTED
         ),
         annotations=READ_ONLY,
     )
@@ -176,7 +179,8 @@ def build_server(
             "One compact row per topic in a channel you can see: each thread, plus main-channel stretches "
             "split at day-long quiet gaps. Each row has the opening message, the latest messages, key "
             "messages (dates, deadlines, document links, watch words), quiet_days and your_part. "
-            "days defaults to 7 (maximum 30 unless configured otherwise). look_for adds words to flag (up to 20). only_mine keeps "
+            f"days defaults to {lim.default_days} (maximum {lim.overview_max_days}). look_for adds words to flag "
+            f"(up to {LOOK_FOR_MAX_WORDS}). only_mine keeps "
             "topics where you were pinged directly or posted. skipped_channels counts the channel or "
             "threads that could not be read. Open a row with get_conversation using its id." + UNTRUSTED
         ),
@@ -193,9 +197,10 @@ def build_server(
     @server.tool(
         title="Search a channel",
         description=(
-            "Find topics in one channel you can see by words (1 to 10, matched at the start of a word, "
+            f"Find topics in one channel you can see by words (1 to {SEARCH_MAX_WORDS}, matched at the start of a word, "
             "case-insensitive), including thread names. Results are grouped by topic, newest match first. "
-            "days defaults to 14 (maximum 30 unless configured otherwise); only matches inside the window count. skipped_channels "
+            f"days defaults to {SEARCH_DEFAULT_DAYS} (maximum {lim.overview_max_days}); only matches inside the "
+            "window count. skipped_channels "
             "counts the channel or threads that could not be read. Open a result with get_conversation "
             "using its id." + UNTRUSTED
         ),
@@ -208,11 +213,13 @@ def build_server(
         title="Get a server-wide overview",
         description=(
             "Last week's discussion across every channel you can see, and deadlines coming up. channels: "
-            "one entry per active channel (message, topic and people counts, up to 3 top topics, signals "
+            "one entry per active channel (message, topic and people counts, up to "
+            f"{lim.brief_topics_per_channel} top topics, signals "
             "first). deadlines: messages with deadline wording (by, due, before, EOD...) whose date falls "
             "from today to today + upcoming_days, read from the last deadline_days; leave and social "
-            "(direct_only) channels are not scanned. days defaults to 7 (maximum 30 unless configured otherwise), deadline_days to 30, "
-            "upcoming_days to 7 (maximum 14). Open any topic id with get_conversation." + UNTRUSTED
+            f"(direct_only) channels are not scanned. days defaults to {SERVER_DEFAULT_DAYS} (maximum "
+            f"{lim.overview_max_days}), deadline_days to {lim.overview_max_days}, upcoming_days to "
+            f"{UPCOMING_DEFAULT_DAYS} (maximum {UPCOMING_MAX_DAYS}). Open any topic id with get_conversation." + UNTRUSTED
         ),
         annotations=READ_ONLY,
     )
@@ -231,7 +238,8 @@ def build_server(
             "(you promised and haven't followed up), unanswered_ask (you asked someone by name and they "
             "haven't posted since), promise_to_you (someone promised you and went quiet), stalled (a "
             "thread quiet for days that ended on a question, date, deadline or document). who says who "
-            "owes the next move. days defaults to 30 (maximum 30 unless configured otherwise). Open any id with get_conversation."
+            f"owes the next move. days defaults to {lim.overview_max_days} (maximum {lim.overview_max_days}). "
+            "Open any id with get_conversation."
             + UNTRUSTED
         ),
         annotations=READ_ONLY,

@@ -14,17 +14,14 @@ from datetime import datetime, timedelta
 
 from discord_mcp.budget import size as _size
 from discord_mcp.budget import trim_messages
-from discord_mcp.matching import ChannelMessages, Identity, RenderContext, ping_reason
-from discord_mcp.messages import THREAD_TYPES, content_messages, home_id, is_bot
+from discord_mcp.matching import ChannelMessages, Identity, RenderContext, channel_ping, is_direct, is_quiet
+from discord_mcp.messages import THREAD_TYPES, content_messages, is_bot
 from discord_mcp.messages import author_id as _author
 from discord_mcp.messages import msg_id as _id
 from discord_mcp.messages import time_of as _time
 from discord_mcp.render import brief, display_name, render_thread
 from discord_mcp.wording import ping_asks, reply_promises
 
-# Ping reasons not asked of the person directly: @everyone anywhere, and @here or a role
-# ping ("group") in a direct_only channel.
-BROADCASTS = frozenset({"everyone", "group"})
 STATUS_ORDER = ("needs_you", "reopened", "check", "fyi", "handled", "announcement")
 # Rows the size budget drops first, from the end of STATUS_ORDER.
 DROPPABLE = frozenset({"fyi", "handled", "announcement"})
@@ -55,12 +52,7 @@ class _Open:
 
 def _hit(m: dict, cm: ChannelMessages, identity: Identity, ctx: RenderContext) -> tuple[str, str | None] | None:
     """ping_reason, with @here and role pings downgraded to "group" in direct_only channels."""
-    hit = ping_reason(m, identity, ctx.role_names)
-    home = home_id(cm.channel)
-    quiet = home in ctx.direct_only or cm.channel["id"] in ctx.direct_only
-    if hit is not None and quiet and hit[0] in ("role", "here"):
-        return ("group", hit[1])
-    return hit
+    return channel_ping(m, identity, ctx, quiet=is_quiet(cm.channel, ctx))
 
 
 def _pings(cm: ChannelMessages, messages: list[dict], identity: Identity, ctx: RenderContext) -> list[Ping]:
@@ -135,11 +127,11 @@ def group_conversations(
             target = _assign(m, open_, identity, ctx)
             if target is not None:
                 _add(target, m, hit)
-                if hit is not None and hit[0] not in BROADCASTS:
+                if hit is not None and is_direct(hit[0]):
                     target.participants |= _people(m) | {identity.user_id}
             elif hit is not None:
                 people = _people(m)
-                if hit[0] not in BROADCASTS:
+                if is_direct(hit[0]):
                     people.add(identity.user_id)
                 o = _Open(
                     conv=Conversation(channel_id=cm.channel["id"], label=cm.label, messages=[], pings=[]),
@@ -167,7 +159,7 @@ def group_conversations(
 
 
 def _mine_after_first_ping(conv: Conversation, identity: Identity) -> list[dict]:
-    direct = [p for p in conv.pings if p[1] not in BROADCASTS]
+    direct = [p for p in conv.pings if is_direct(p[1])]
     first = _id((direct or conv.pings)[0][0])
     return [m for m in conv.messages if _author(m) == identity.user_id and _id(m) > first]
 
@@ -189,7 +181,7 @@ def _asked(conv: Conversation, direct: list[Ping], after: int, before: int | Non
 
 
 def status_of(conv: Conversation, identity: Identity) -> str:
-    direct = [p for p in conv.pings if p[1] not in BROADCASTS]
+    direct = [p for p in conv.pings if is_direct(p[1])]
     if not direct:
         return "announcement"
     mine = _mine_after_first_ping(conv, identity)
@@ -274,7 +266,7 @@ def render_row(conv: Conversation, identity: Identity, ctx: RenderContext) -> di
             row["latest"] = brief(after[-1], ctx, lim.summary_chars) if after else None
     else:
         # fyi shows the direct ping that named the person, not a later @everyone.
-        shown = [p for p in conv.pings if p[1] not in BROADCASTS] if status == "fyi" else conv.pings
+        shown = [p for p in conv.pings if is_direct(p[1])] if status == "fyi" else conv.pings
         row["pings"] = [_ping_item(shown[-1], ctx, lim.summary_chars)]
     row["id"] = conv.id
     return row
