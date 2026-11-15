@@ -179,6 +179,13 @@ async def test_get_channel_messages_limit_above_maximum_is_rejected(client):
         await make(client, config("10")).get_channel_messages(IDENT, "10", limit=301)
 
 
+async def test_get_channel_messages_limit_true_is_rejected(client):
+    # bool is an int in Python; like days, limit must be a real number.
+    with pytest.raises(ValueError, match="limit must be between 1 and 300"):
+        await make(client, config("10")).get_channel_messages(IDENT, "10", limit=True)
+    assert not any(c.startswith("messages:") for c in client.calls)
+
+
 async def test_resolve_identity_reads_member_roles(client):
     ident = await make(client, config()).resolve_identity(ME)
     assert ident == Identity(user_id=ME, role_ids=frozenset({ROLE_DEV}))
@@ -217,7 +224,7 @@ async def test_fifteen_ping_fixture_is_small():
 
 # --- get_conversation -----------------------------------------------------------
 
-from discord_mcp.digest import AccessDenied, InputError  # noqa: E402
+from discord_mcp.errors import AccessDenied, InputError  # noqa: E402
 
 LINK = f"https://discord.com/channels/{GUILD_ID}"
 
@@ -833,7 +840,7 @@ def _busy_server(main_msgs: int, threads: int) -> FakeClient:
 async def test_unused_share_goes_back_to_a_busy_channel():
     c = _busy_server(1000, 100)
     d = make(c, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits(server_request_messages=3000)))
-    read = await d._read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    read = await d._reader.read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
     main = next(cm for cm in read.fetched if cm.channel["id"] == "10")
     assert len(main.messages) == 1000
     assert read.capped is False
@@ -846,7 +853,7 @@ async def test_request_budget_is_a_hard_total():
         c.messages[tid] = [msg(str(40_000 + t * 100 + i), tid, hours_ago=2) for i in range(50)]
     d = make(c, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(),
                        limits=Limits(server_request_messages=3000, server_max_threads=1000)))
-    read = await d._read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    read = await d._reader.read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
     assert sum(len(cm.messages) for cm in read.fetched) <= 3000
     assert read.capped is True
 
@@ -854,7 +861,7 @@ async def test_request_budget_is_a_hard_total():
 async def test_thread_cap_keeps_the_newest_threads():
     c = _busy_server(5, 10)
     d = make(c, Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits(server_max_threads=3)))
-    read = await d._read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    read = await d._reader.read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
     got = sorted(cm.channel["id"] for cm in read.fetched if cm.channel["id"] != "10")
     assert got == ["507", "508", "509"]
     assert read.capped is True

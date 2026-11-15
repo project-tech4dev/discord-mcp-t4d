@@ -4,7 +4,8 @@ import pytest
 
 from discord_mcp.brief import fit_server_overview
 from discord_mcp.config import ChannelEntry, Config, Limits
-from discord_mcp.digest import Digest, InputError
+from discord_mcp.digest import Digest
+from discord_mcp.errors import InputError
 from discord_mcp.matching import Identity
 from tests.fakes import GUILD_ID, ME, NOW, OTHER, ROLE_DEV, THIRD, FakeClient, channel, msg, user
 

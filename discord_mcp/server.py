@@ -15,7 +15,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from discord_mcp import audit
-from discord_mcp.digest import AccessDenied, Digest, InputError, NotAMember, ToolResult
+from discord_mcp.digest import Digest, ToolResult
+from discord_mcp.errors import AccessDenied, InputError, NotAMember
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.matching import Identity
 

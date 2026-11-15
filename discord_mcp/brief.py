@@ -1,7 +1,7 @@
 """Server-wide views for the brief: last week's discussion, deadlines, and open loops.
 
 Pure functions over messages already fetched for one request (see
-Digest._read_server). Nothing is kept after a request.
+Reader.read_server). Nothing is kept after a request.
 """
 
 from __future__ import annotations

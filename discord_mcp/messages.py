@@ -5,7 +5,7 @@ No rendering and no decisions here: just the fields every module reads the same 
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 # Normal messages and replies. Everything else (joins, pins, thread starters) is skipped.
 CONTENT_TYPES = frozenset({0, 19})
@@ -14,6 +14,7 @@ FORUM_TYPES = frozenset({15})  # messages live only in its threads
 READABLE_TYPES = TEXT_TYPES | FORUM_TYPES
 THREAD_TYPES = frozenset({10, 11, 12})
 PRIVATE_THREAD = 12
+DISCORD_EPOCH_MS = 1420070400000
 # Between a channel and a thread name in labels ("general › launch plan").
 LABEL_SEP = " › "
 
@@ -28,6 +29,11 @@ def author_id(m: dict) -> str | None:
 
 def is_bot(m: dict) -> bool:
     return bool((m.get("author") or {}).get("bot"))
+
+
+def snowflake_time(snowflake: str) -> datetime:
+    """When a Discord id (message, channel or thread) was created."""
+    return datetime.fromtimestamp(((int(snowflake) >> 22) + DISCORD_EPOCH_MS) / 1000, tz=UTC)
 
 
 def msg_id(m: dict) -> int:

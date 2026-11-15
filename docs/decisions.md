@@ -444,3 +444,24 @@ why it was made, and what was rejected.
 - **Rejected:** merging `Conversation` and `Topic` (they answer different
   questions: what pinged me, and what is happening in a channel).
 
+
+## 2026-11-15 — Access and reading split out of digest.py (refactor, phase 2)
+
+- **Decision:** split the 840-line `digest.py` into `errors.py` (the tool
+  errors, fixed text), `access.py` (both access gates: `view`, `threads`,
+  and new `one_channel`, `one_thread` and `home_of` checks used by every
+  one-channel tool and link), and `reader.py` (fetching, thread starters, the server-wide read
+  and the one-channel topic read, which now returns a `ChannelRead`
+  dataclass instead of an 8-tuple). `digest.py` keeps only the tool
+  handlers. One `_window` check replaces `_days` and the hand-written
+  `limit` check, so `limit=True` is now rejected like `days=True`. Both
+  thread caps share `newest_threads`; the two message budget formulas are
+  unchanged.
+- **Why:** with five question types, the access rules were mixed in with
+  tool code, and the "may read, then view, then visible" check was written
+  out four times. Keeping the gates in one module makes them easier to
+  review on their own.
+- **Rejected:** one message-budget formula for both reads (they balance
+  different things: one channel's threads, or every channel on the server),
+  and re-exporting the errors from `digest.py` (callers now import them
+  from `errors.py`).
