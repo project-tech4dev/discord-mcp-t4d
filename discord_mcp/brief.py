@@ -193,7 +193,10 @@ _APOS = "['\u2018\u2019\u02bc`]"
 # which only reads the last reply in a ping conversation. "will" alone ("that will work") or
 # "later"/"soon" are not promises here, nor are refusals and absences ("I will not be able to",
 # "I'll be on leave").
-_NOT_A_PROMISE = r"(?!\s+not\b|\s+be\s+(?:on\s+leave|out|away|off|offline|unavailable|travell?ing)\b)"
+_NOT_A_PROMISE = (
+    r"(?!\s+not\b|\s+be\s+(?:on\s+(?:leave|pto|vacation|holiday)|ooo|out|away|off|offline|unavailable"
+    r"|travell?ing|back)\b)"
+)
 OWN_PROMISE = re.compile(
     rf"\b(?:(?:i{_APOS}ll|i\s+will){_NOT_A_PROMISE}|i{_APOS}?m\s+on\s+it|let\s+me(?!\s+know)|will\s+do"
     r"|will\s+(?:send|share|do|check|update|get\s+back|look|review|follow\s+up|circle\s+back|add|fix"
@@ -258,8 +261,6 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
         items.append((kind, when, row))
 
     for g in groups:
-        if g.channel["id"] in ctx.direct_only:
-            continue  # leave notices and social posts, as in deadline_items
         # One pass per channel group, so each check below is a dictionary lookup.
         latest_post: dict[str, datetime] = {}
         my_replies: set[str] = set()
