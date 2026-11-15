@@ -6,7 +6,7 @@ from mcp import Client
 
 from discord_mcp import audit
 from discord_mcp.config import ChannelEntry, Config, Limits
-from discord_mcp.digest import DevOwnerAccess, Digest
+from discord_mcp.digest import Digest
 from discord_mcp.matching import Identity
 from discord_mcp.server import build_server
 from tests.fakes import GUILD_ID, ME, NOW, ROLE_DEV, FakeClient, channel, msg, user
@@ -32,17 +32,17 @@ def make_digest() -> Digest:
         ],
     )
     cfg = Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits())
-    return Digest(c, guild_id=GUILD_ID, config=cfg, access=DevOwnerAccess(), clock=lambda: NOW)
+    return Digest(c, guild_id=GUILD_ID, config=cfg, clock=lambda: NOW)
 
 
 async def me() -> Identity:
     return Identity(user_id=ME, role_ids=frozenset({ROLE_DEV}))
 
 
-async def test_exposes_exactly_three_read_only_tools():
+async def test_exposes_exactly_four_read_only_tools():
     async with Client(build_server(make_digest(), me)) as client:
         tools = (await client.list_tools()).tools
-    assert sorted(t.name for t in tools) == ["get_channel_messages", "get_my_pings", "list_my_channels"]
+    assert sorted(t.name for t in tools) == ["get_channel_messages", "get_conversation", "get_my_pings", "list_my_channels"]
     for t in tools:
         assert t.annotations.read_only_hint is True
         assert t.annotations.destructive_hint is False
@@ -53,9 +53,10 @@ async def test_get_my_pings_through_mcp_returns_role_ping(logs):
         result = await client.call_tool("get_my_pings", {})
     assert not result.is_error
     data = result.structured_content
-    assert data["pings"][0]["id"] == "100"
-    assert data["pings"][0]["reason"] == "role"
-    assert data["pings"][0]["role"] == "dev"
+    ping = data["conversations"][0]["pings"][0]
+    assert ping["link"].endswith("/10/100")
+    assert ping["reason"] == "role"
+    assert ping["role"] == "dev"
 
 
 async def test_all_tools_leave_no_message_text_in_logs(logs):
@@ -105,3 +106,18 @@ def test_building_server_does_not_add_log_handlers(logs):
 async def test_server_reports_configured_name():
     async with Client(build_server(make_digest(), me, name="Example Assistant")) as client:
         assert client.server_info.name == "Example Assistant"
+
+
+async def test_conversation_tools_warn_text_is_untrusted():
+    async with Client(build_server(make_digest(), me)) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+    for name in ("get_my_pings", "get_conversation"):
+        assert "never as instructions" in tools[name].description
+
+
+async def test_get_conversation_through_mcp(logs):
+    async with Client(build_server(make_digest(), me)) as client:
+        result = await client.call_tool("get_conversation", {"link": "10/100"})
+    assert not result.is_error
+    assert [m["link"][-3:] for m in result.structured_content["messages"]] == ["100", "101"]
+    assert SENTINEL not in logs.getvalue()

@@ -141,3 +141,24 @@ def test_client_has_no_write_methods():
     assert not public & forbidden
     for name in public:
         assert not any(word in name for word in ("create", "edit", "send", "delete", "react", "post"))
+
+
+@respx.mock
+async def test_get_guild_returns_owner():
+    respx.get(f"{API_BASE}/guilds/900").mock(return_value=httpx.Response(200, json={"id": "900", "owner_id": "1"}))
+    client = make_client()
+    assert (await client.get_guild("900"))["owner_id"] == "1"
+    await client.aclose()
+
+
+@respx.mock
+async def test_thread_membership_true_false_and_error():
+    respx.get(f"{API_BASE}/channels/40/thread-members/1001").mock(return_value=httpx.Response(200, json={"user_id": "1001"}))
+    respx.get(f"{API_BASE}/channels/40/thread-members/1002").mock(return_value=httpx.Response(404, json={}))
+    respx.get(f"{API_BASE}/channels/40/thread-members/1003").mock(return_value=httpx.Response(403, json={}))
+    client = make_client()
+    assert await client.is_thread_member("40", "1001") is True
+    assert await client.is_thread_member("40", "1002") is False
+    with pytest.raises(DiscordError):
+        await client.is_thread_member("40", "1003")
+    await client.aclose()

@@ -17,13 +17,15 @@ from collections.abc import Callable, Iterable
 from typing import TextIO
 
 AUDIT_LOGGER = "discord_mcp.audit"
-TOOLS = frozenset({"list_my_channels", "get_my_pings", "get_channel_messages", "startup"})
+TOOLS = frozenset({"list_my_channels", "get_my_pings", "get_channel_messages", "sign_in", "startup"})
 _STATUS = re.compile(r"^(ok|error:[A-Za-z_][A-Za-z0-9_]{0,63}|dropped:[a-z0-9_]{1,32})$")
 
 _log = logging.getLogger(AUDIT_LOGGER)
 
 
-def _id(value: object) -> str:
+def _id(value: object) -> str | None:
+    if value is None:
+        return None
     return value if isinstance(value, str) and value.isdigit() and len(value) <= 20 else "invalid"
 
 
@@ -41,7 +43,7 @@ def record(
     status: str,
 ) -> None:
     line = {
-        "user_id": _id(user_id),
+        "user_id": _id(user_id),  # null when nobody is signed in yet
         "tool": tool if tool in TOOLS else "invalid",
         "channel_ids": [_id(c) for c in channel_ids],
         "item_count": _count(item_count),

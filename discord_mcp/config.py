@@ -15,14 +15,17 @@ class ConfigError(Exception):
 class Limits:
     default_days: int = 7
     max_days: int = 14
-    max_items: int = 100
     text_chars: int = 1500
     reply_chars: int = 200
-    follow_up_count: int = 10
-    follow_up_chars: int = 300
     channel_default_days: int = 3
     channel_default_limit: int = 100
     channel_max_limit: int = 300
+    conversation_gap_hours: int = 12
+    conversation_max_hours: int = 24
+    summary_chars: int = 200
+    max_result_chars: int = 40000
+    conversation_max_messages: int = 50
+    row_max_pings: int = 5
 
 
 @dataclass(frozen=True)

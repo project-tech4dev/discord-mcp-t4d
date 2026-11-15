@@ -41,12 +41,6 @@ class ChannelMessages:
     messages: list[dict]  # oldest first
 
 
-@dataclass
-class PingResult:
-    pings: list[dict]
-    truncated: bool
-
-
 def ping_reason(message: dict, identity: Identity, role_names: dict[str, str]) -> tuple[str, str | None] | None:
     """Return (reason, role_name) if the message pings the person, else None."""
     if message.get("author", {}).get("id") == identity.user_id:
@@ -99,43 +93,3 @@ def render_message(message: dict, label: str, ctx: RenderContext, *, text_chars:
     if ref:
         out["reply_to"] = _replace_mentions(ref.get("content", ""), ref, ctx)[: ctx.limits.reply_chars]
     return out
-
-
-def find_pings(
-    channels: list[ChannelMessages],
-    identity: Identity,
-    ctx: RenderContext,
-    *,
-    max_items: int | None = None,
-) -> PingResult:
-    cap = max_items if max_items is not None else ctx.limits.max_items
-    by_id = {c.channel["id"]: c for c in channels}
-    n = ctx.limits.follow_up_count
-
-    def follow_up(messages: list[dict]) -> list[dict]:
-        return [render_message(m, label, ctx, text_chars=ctx.limits.follow_up_chars) for m, label in messages[:n]]
-
-    found: list[tuple[int, dict]] = []
-    for cm in channels:
-        content = [m for m in cm.messages if m.get("type") in CONTENT_TYPES]
-        for i, m in enumerate(content):
-            hit = ping_reason(m, identity, ctx.role_names)
-            if hit is None:
-                continue
-            item = render_message(m, cm.label, ctx)
-            item["reason"] = hit[0]
-            if hit[1] is not None:
-                item["role"] = hit[1]
-
-            thread_id = (m.get("thread") or {}).get("id")
-            if thread_id and thread_id in by_id:
-                started = by_id[thread_id]
-                later = [(t, started.label) for t in started.messages if t.get("type") in CONTENT_TYPES]
-            else:
-                later = [(t, cm.label) for t in content[i + 1 :]]
-            item["follow_up"] = follow_up(later)
-            found.append((int(m["id"]), item))
-
-    found.sort(key=lambda pair: pair[0], reverse=True)
-    pings = [item for _, item in found]
-    return PingResult(pings=pings[:cap], truncated=len(pings) > cap)

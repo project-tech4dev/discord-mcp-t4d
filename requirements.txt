@@ -1,5 +1,5 @@
 # Runtime dependencies, every one pinned to an exact version (including transitive ones).
-# Direct: mcp, httpx. Regenerate with a clean venv + pip freeze when upgrading.
+# Direct: mcp, httpx, uvicorn, starlette, cryptography. Regenerate with a clean venv + pip freeze when upgrading.
 annotated-types==0.8.0
 anyio==4.16.0
 attrs==26.1.0

@@ -5,14 +5,18 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from discord_mcp.discord_client import DiscordError
+from discord_mcp.permissions import READ_MESSAGE_HISTORY, VIEW_CHANNEL
 
 NOW = datetime(2026, 11, 15, 9, 0, tzinfo=UTC)
 GUILD_ID = "900"
 ME = "1001"
 OTHER = "1002"
 BOT_USER = "1003"
+THIRD = "1004"
 ROLE_DEV = "501"
 ROLE_OPS = "502"
+OWNER = "1"
+READ = VIEW_CHANNEL | READ_MESSAGE_HISTORY
 
 
 def ts(hours_ago: float) -> str:
@@ -74,11 +78,14 @@ class FakeClient:
     def __init__(self) -> None:
         self.channels: dict[str, dict] = {}
         self.messages: dict[str, list[dict]] = {}
+        self.owner_id = OWNER
         self.roles: list[dict] = [
-            {"id": GUILD_ID, "name": "@everyone"},
-            {"id": ROLE_DEV, "name": "dev"},
-            {"id": ROLE_OPS, "name": "ops"},
+            {"id": GUILD_ID, "name": "@everyone", "permissions": str(READ)},
+            {"id": ROLE_DEV, "name": "dev", "permissions": "0"},
+            {"id": ROLE_OPS, "name": "ops", "permissions": "0"},
         ]
+        self.thread_members: dict[str, set[str]] = {}
+        self.fail_guild: int | None = None
         self.members: dict[str, dict] = {ME: {"user": user(ME, "Me"), "roles": [ROLE_DEV]}}
         self.active_threads: list[dict] = []
         self.archived_threads: dict[str, list[dict]] = {}
@@ -99,6 +106,15 @@ class FakeClient:
         if channel_id not in self.channels:
             raise DiscordError(404)
         return self.channels[channel_id]
+
+    async def get_guild(self, guild_id: str) -> dict:
+        if self.fail_guild:
+            raise DiscordError(self.fail_guild)
+        return {"id": guild_id, "owner_id": self.owner_id}
+
+    async def is_thread_member(self, thread_id: str, user_id: str) -> bool:
+        self._maybe_fail(thread_id)
+        return user_id in self.thread_members.get(thread_id, set())
 
     async def get_guild_channels(self, guild_id: str) -> list[dict]:
         self.calls.append("guild_channels")

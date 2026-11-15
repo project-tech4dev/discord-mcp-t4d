@@ -1,9 +1,7 @@
 from discord_mcp.config import Limits
 from discord_mcp.matching import (
-    ChannelMessages,
     Identity,
     RenderContext,
-    find_pings,
     ping_reason,
     render_message,
 )
@@ -154,79 +152,3 @@ def test_render_reply_carries_first_200_chars_of_original():
     orig = msg("1", "10", author_id=ME, content="q" * 500)
     out = render_message(msg("2", "10", referenced=orig), "general", ctx())
     assert out["reply_to"] == "q" * 200
-
-
-# --- find_pings -----------------------------------------------------------------
-
-
-def chronological(*messages):
-    return sorted(messages, key=lambda m: int(m["id"]))
-
-
-def test_finds_pings_newest_first_with_reason():
-    a = msg("1", "10", mentions=[user(ME)], hours_ago=5)
-    b = msg("2", "10", mention_roles=[ROLE_DEV], hours_ago=3)
-    c = msg("3", "10", content="noise", hours_ago=2)
-    result = find_pings([ChannelMessages(CH, "general", chronological(a, b, c))], IDENT, ctx())
-    assert [p["id"] for p in result.pings] == ["2", "1"]
-    assert result.pings[0]["reason"] == "role" and result.pings[0]["role"] == "dev"
-    assert result.pings[1]["reason"] == "mention" and "role" not in result.pings[1]
-    assert result.truncated is False
-
-
-def test_follow_up_is_next_ten_channel_messages_including_own():
-    ping = msg("100", "10", mentions=[user(ME)], hours_ago=20)
-    after = [msg(str(101 + i), "10", hours_ago=19 - i) for i in range(12)]
-    after[0]["author"] = user(ME)
-    result = find_pings([ChannelMessages(CH, "general", chronological(ping, *after))], IDENT, ctx())
-    assert len(result.pings) == 1
-    follow = result.pings[0]["follow_up"]
-    assert [f["id"] for f in follow] == [str(101 + i) for i in range(10)]
-    assert follow[0]["author"] == f"user{ME}"
-
-
-def test_follow_up_text_uses_shorter_limit():
-    ping = msg("100", "10", mentions=[user(ME)], hours_ago=2)
-    after = msg("101", "10", content="y" * 1000, hours_ago=1)
-    result = find_pings([ChannelMessages(CH, "general", chronological(ping, after))], IDENT, ctx())
-    assert len(result.pings[0]["follow_up"][0]["text"]) == 300
-
-
-def test_follow_up_comes_from_thread_started_on_the_ping():
-    ping = msg("100", "10", mentions=[user(ME)], hours_ago=5, thread={"id": "100"})
-    channel_noise = msg("101", "10", content="unrelated", hours_ago=4)
-    thread = channel("100", "deploy-thread", 11, parent_id="10")
-    t1 = msg("200", "100", content="on it", hours_ago=3)
-    t2 = msg("201", "100", content="done", hours_ago=2)
-    result = find_pings(
-        [
-            ChannelMessages(CH, "general", chronological(ping, channel_noise)),
-            ChannelMessages(thread, "general › deploy-thread", chronological(t1, t2)),
-        ],
-        IDENT,
-        ctx(),
-    )
-    assert [f["id"] for f in result.pings[0]["follow_up"]] == ["200", "201"]
-
-
-def test_ping_inside_thread_follows_up_within_thread():
-    thread = channel("100", "deploy-thread", 11, parent_id="10")
-    p = msg("200", "100", mentions=[user(ME)], hours_ago=3)
-    t2 = msg("201", "100", hours_ago=2)
-    result = find_pings([ChannelMessages(thread, "general › deploy-thread", chronological(p, t2))], IDENT, ctx())
-    assert result.pings[0]["channel"] == "general › deploy-thread"
-    assert result.pings[0]["link"].endswith("/100/200")
-    assert [f["id"] for f in result.pings[0]["follow_up"]] == ["201"]
-
-
-def test_system_messages_are_ignored():
-    join = msg("1", "10", mention_everyone=True, mtype=7)
-    result = find_pings([ChannelMessages(CH, "general", [join])], IDENT, ctx())
-    assert result.pings == []
-
-
-def test_cap_cuts_list_and_sets_flag():
-    msgs = [msg(str(i), "10", mentions=[user(ME)], hours_ago=100 - i) for i in range(1, 6)]
-    result = find_pings([ChannelMessages(CH, "general", msgs)], IDENT, ctx(), max_items=3)
-    assert [p["id"] for p in result.pings] == ["5", "4", "3"]
-    assert result.truncated is True

@@ -75,6 +75,19 @@ class DiscordClient:
 
     # --- server structure -------------------------------------------------
 
+    async def get_guild(self, guild_id: str) -> dict:
+        return await self._get(f"/guilds/{guild_id}")
+
+    async def is_thread_member(self, thread_id: str, user_id: str) -> bool:
+        """True if the user is in the thread; False on 404; DiscordError on anything else."""
+        try:
+            await self._get(f"/channels/{thread_id}/thread-members/{user_id}")
+        except DiscordError as e:
+            if e.status == 404:
+                return False
+            raise
+        return True
+
     async def get_guild_channels(self, guild_id: str) -> list[dict]:
         return await self._get(f"/guilds/{guild_id}/channels")
 

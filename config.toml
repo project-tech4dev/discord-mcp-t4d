@@ -27,11 +27,14 @@ deny = []
 [limits]
 default_days = 7
 max_days = 14
-max_items = 100
 text_chars = 1500
 reply_chars = 200
-follow_up_count = 10
-follow_up_chars = 300
 channel_default_days = 3
 channel_default_limit = 100
 channel_max_limit = 300
+conversation_gap_hours = 12
+conversation_max_hours = 24
+summary_chars = 200
+max_result_chars = 40000
+conversation_max_messages = 50
+row_max_pings = 5
