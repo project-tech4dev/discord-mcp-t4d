@@ -14,7 +14,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthClientInformationFull
 from starlette.applications import Starlette
 
-from discord_mcp.digest import Digest, NotAMember
+from discord_mcp.digest import Digest
+from discord_mcp.errors import NotAMember
 from discord_mcp.matching import Identity
 from discord_mcp.oauth_provider import SignInProvider
 from discord_mcp.server import build_server

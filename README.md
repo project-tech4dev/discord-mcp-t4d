@@ -26,7 +26,10 @@ tunnel). Deployment as a hosted connector is stage 3.
 | `discord_mcp/signals.py` | Spots dates, deadline words, document links and watch/look_for words |
 | `discord_mcp/conversations.py` | Groups pings into conversations, marks each needs_you / reopened / check / fyi / handled / announcement, fits the result to a size budget |
 | `discord_mcp/permissions.py` | Discord's permission rules: owner, Administrator, @everyone, roles, member, private threads |
-| `discord_mcp/digest.py` | Runs each tool: allowlist, deny list, permissions, fetch, drop-and-log on any failure |
+| `discord_mcp/errors.py` | The errors a tool call can end with, each fixed text |
+| `discord_mcp/access.py` | Both access gates: allowlist or allow-all, deny lists, Discord permissions, drop-and-log |
+| `discord_mcp/reader.py` | Reads permitted channels and threads within the message budgets (one channel, or the whole server) |
+| `discord_mcp/digest.py` | Runs each tool: checks input, then asks access and reader and shapes the answer |
 | `discord_mcp/oauth_provider.py` | The sign-in server Claude talks to, in front of Discord |
 | `discord_mcp/discord_oauth.py` | Discord sign-in: learns the user ID, then revokes Discord's token |
 | `discord_mcp/tokens.py` | Encrypted self-contained tokens; no token database |

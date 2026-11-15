@@ -40,7 +40,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from discord_mcp import audit
-from discord_mcp.digest import NotAMember
+from discord_mcp.errors import NotAMember
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.tokens import ReplayGuard, TokenBox
 
