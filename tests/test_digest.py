@@ -865,3 +865,151 @@ async def test_pings_use_their_own_size_limit(client):
     big = await make(client, config("10", max_result_chars=400, pings_max_chars=100000)).get_my_pings(IDENT)
     assert small.payload["truncated"] is True
     assert big.payload["truncated"] is False
+
+
+# --- rate limits and the bot's own access ---------------------------------------------
+
+
+async def test_rate_limited_channels_are_counted_apart_from_other_skips(client):
+    client.fail["20"] = 429
+    payload = (await make(client, config("10", "20")).get_my_pings(IDENT)).payload
+    assert payload["skipped_channels"] == 1
+    assert payload["rate_limited_channels"] == 1
+
+
+async def test_no_rate_limited_key_when_nothing_was_rate_limited(client):
+    client.fail["20"] = 403
+    payload = (await make(client, config("10", "20")).get_my_pings(IDENT)).payload
+    assert payload["skipped_channels"] == 1
+    assert "rate_limited_channels" not in payload
+
+
+@pytest.mark.parametrize("tool", ["get_server_overview", "get_open_loops"])
+async def test_brief_tools_report_rate_limited_channels(client, tool):
+    client.fail["20"] = 429
+    payload = (await getattr(make(client, config("10", "20")), tool)(IDENT)).payload
+    assert payload["rate_limited_channels"] == 1
+
+
+async def test_rate_limited_thread_lookup_is_reported(client):
+    client.fail["10"] = 429  # the archived-thread lookup for the parent fails
+    payload = (await make(client, config("10", "20")).get_server_overview(IDENT)).payload
+    assert payload["rate_limited_channels"] == 1
+
+
+async def test_channel_overview_on_a_rate_limited_channel_says_try_again(client):
+    from discord_mcp.discord_client import DiscordError
+
+    client.fail["10"] = 429
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_channel_overview(IDENT, "10")
+
+
+async def test_channel_overview_reports_rate_limited_threads(client):
+    thread = channel("15", "plan", 11, parent_id="10", thread_metadata={"archive_timestamp": NOW.isoformat()})
+    client.add_channel(thread, [msg("150", "15", hours_ago=3)])
+    client.active_threads = [thread]
+    client.fail["15"] = 429
+    payload = (await make(client, config("10")).get_channel_overview(IDENT, "10")).payload
+    assert payload["rate_limited_channels"] == 1
+
+
+def bot_member(client: FakeClient, *roles: str) -> None:
+    from tests.fakes import BOT_USER
+
+    client.members[BOT_USER] = {"user": user(BOT_USER, "bot", bot=True), "roles": list(roles)}
+
+
+def bot_blocked_channel() -> dict:
+    """Readable by the dev role (the person), not by @everyone (the bot has no roles)."""
+    from discord_mcp.permissions import READ_MESSAGE_HISTORY, VIEW_CHANNEL
+
+    read = str(VIEW_CHANNEL | READ_MESSAGE_HISTORY)
+    return channel(
+        "30",
+        "dev-only",
+        permission_overwrites=[
+            {"id": GUILD_ID, "type": 0, "allow": "0", "deny": read},
+            {"id": ROLE_DEV, "type": 0, "allow": read, "deny": "0"},
+        ],
+    )
+
+
+async def test_channels_the_bot_cannot_read_are_skipped_without_a_request(client):
+    client.add_channel(bot_blocked_channel(), [msg("300", "30", mentions=[user(ME)], hours_ago=2)])
+    bot_member(client)
+    payload = (await make(client, config("10", "30")).get_my_pings(IDENT)).payload
+    assert "messages:30" not in client.calls
+    assert "archived:30" not in client.calls
+    assert payload["skipped_channels"] == 1
+    assert "rate_limited_channels" not in payload
+
+
+async def test_bot_without_access_is_skipped_quietly_counted_in_allow_all(client):
+    client.add_channel(bot_blocked_channel(), [msg("300", "30", mentions=[user(ME)], hours_ago=2)])
+    bot_member(client)
+    cfg = Config(allowlist={}, deny=frozenset(), limits=Limits(), allow_all_channels=True)
+    payload = (await make(client, cfg).get_my_pings(IDENT)).payload
+    assert "messages:30" not in client.calls
+    assert payload["skipped_channels"] == 1  # the person can see it, so counting it reveals nothing
+
+
+async def test_bot_roles_unknown_falls_back_to_trying_the_channel(client):
+    client.add_channel(bot_blocked_channel(), [msg("300", "30", mentions=[user(ME)], hours_ago=2)])
+    # no bot member entry: the lookup fails, so channels are read as before
+    payload = (await make(client, config("10", "30")).get_my_pings(IDENT)).payload
+    assert "messages:30" in client.calls
+    assert "300" in ping_ids(payload)
+
+
+async def test_bot_user_is_looked_up_once_per_digest(client):
+    bot_member(client, ROLE_DEV)
+    d = make(client, config("10"))
+    await d.get_my_pings(IDENT)
+    await d.get_my_pings(IDENT)
+    assert client.calls.count("users_me") == 1
+
+
+async def test_get_conversation_on_a_rate_limited_channel_says_try_again(client):
+    from discord_mcp.discord_client import DiscordError
+
+    client.fail["10"] = 429
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_conversation(IDENT, f"https://discord.com/channels/{GUILD_ID}/10/100")
+
+
+async def test_opening_a_main_stretch_when_rate_limited_says_try_again(client):
+    from discord_mcp.discord_client import DiscordError
+
+    client.fail["10"] = 429
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_conversation(IDENT, "m:10/100")
+
+
+async def test_opening_a_rate_limited_thread_says_try_again(client):
+    from discord_mcp.discord_client import DiscordError
+
+    thread = channel("15", "plan", 11, parent_id="10", thread_metadata={"archive_timestamp": NOW.isoformat()})
+    client.add_channel(thread, [msg("150", "15", hours_ago=3)])
+    client.active_threads = [thread]
+    d = make(client, config("10"))
+    real = client.get_messages_since
+
+    async def busy(channel_id, cutoff, max_count=None):
+        if channel_id == "15":
+            raise DiscordError(429)
+        return await real(channel_id, cutoff, max_count)
+
+    client.get_messages_since = busy
+    with pytest.raises(DiscordError):
+        await d.get_conversation(IDENT, "t:15")
+
+
+async def test_rate_limited_private_thread_lookup_is_counted(client):
+    recent = str((int(NOW.timestamp() * 1000) - 1420070400000 - 3_600_000) << 22)  # a message an hour ago
+    thread = channel("16", "private", 12, parent_id="10", last_message_id=recent)
+    client.add_channel(thread, [])
+    client.active_threads = [thread]
+    client.fail["16"] = 429
+    payload = (await make(client, config("10")).get_my_pings(IDENT)).payload
+    assert payload["rate_limited_channels"] == 1

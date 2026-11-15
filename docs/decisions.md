@@ -322,3 +322,48 @@ why it was made, and what was rejected.
   is already as short as it gets (the size estimate is corrected exactly);
   "did you see <link>?" is still a question; `pings_max_chars` is capped at
   200,000.
+
+## 2026-11-15 — Brief layout, and Discord's rate limits (after the second real run)
+
+- **5×5×5 brief** (maintainer's call): pending, deadlines and nudges show at
+  most 5 items each, the ones most worth acting on; everything else goes to a
+  new "more to check" section (one line each, with its link), then last week.
+- **Rate limits were silently dropping channels.** The three brief calls run
+  in parallel, each reading 8 things at once, and each request backed off on
+  its own after a 429. Some ran out of retries and the whole channel was
+  counted as "skipped" (a real run lost one of the busiest channels). Fixes:
+  - **Shared pacing in the client:** at most 8 requests in flight across all
+    calls; a 429 pauses every request on the client for Discord's
+    `retry_after`; an exhausted bucket holds back only the next request to
+    the same path (the data is returned at once). The client keeps paths and
+    times only, never message data.
+  - **Reported, not hidden:** results add `rate_limited_channels` when Discord
+    refused channels for being busy, and the instructions tell Claude to say
+    the answer is incomplete. A rate-limited channel overview fails with the
+    "try again shortly" error instead of "not available to you".
+  - **Fewer refusals:** the server checks the bot's own roles and skips
+    channels the bot cannot read without asking Discord (each 403 counts
+    toward Discord's invalid-request limit, which can block the bot's IP).
+    These count in `skipped_channels` (the person can see them, so the count
+    reveals nothing). If the bot lookup fails, channels are tried as before.
+    The bot's user ID is the only thing kept between requests.
+- **Rejected:** a cache of refused channel IDs with a time limit (state that
+  can go stale; the role check needs none).
+- **Review outcomes:**
+  - A request queued for a slot checks the pause again once it has the slot
+    (otherwise queued requests fired straight into a fresh 429).
+  - Waits are capped: each Discord value at 60s (odd or infinite values fall
+    back to 1s), and a request facing more than 30s fails at once with "try
+    again shortly" rather than hanging every call.
+  - Bucket waits are kept per route and channel (a trailing message or user
+    ID is folded away), and expired entries are cleared on every insert.
+  - `get_conversation` and opening a thread or stretch say "try again" when
+    Discord was busy, instead of "not available to you"; a 429 on a private
+    thread's membership lookup counts in `rate_limited_channels` (allowlist
+    mode; allow-all keeps it quiet); the bot lookup runs alongside the server
+    lookups instead of after them.
+  - Confirmed: no new count, error or log line reveals hidden channels; the
+    bot check only narrows access.
+- **Deferred:** a 429 on any route pauses the whole client (simple and
+  cautious; per-route pauses only for non-global 429s if this proves slow);
+  private threads the bot isn't in still cost one refused request.

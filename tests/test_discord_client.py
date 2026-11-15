@@ -22,6 +22,25 @@ def make_client(sleeper=None) -> DiscordClient:
     return DiscordClient("tok", sleep=sleeper or Sleeper())
 
 
+class Clock:
+    """A sleeper that moves a fake clock, so pauses can be measured without waiting."""
+
+    def __init__(self):
+        self.t = 100.0
+        self.slept: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(round(seconds, 6))
+        self.t += seconds
+
+
+def clocked(clock: Clock, **kw) -> DiscordClient:
+    return DiscordClient("tok", sleep=clock.sleep, now=clock.now, **kw)
+
+
 def page(start_id: int, count: int, start_hours_ago: float) -> list[dict]:
     """Newest-first page of messages, one per hour, going back in time."""
     return [msg(str(start_id - i), "10", hours_ago=start_hours_ago + i) for i in range(count)]
@@ -60,12 +79,12 @@ async def test_stops_when_page_is_short():
 
 @respx.mock
 async def test_retries_after_429_using_retry_after():
-    sleeper = Sleeper()
+    sleeper = Clock()
     respx.get(f"{API_BASE}/channels/10").side_effect = [
         httpx.Response(429, json={"retry_after": 1.5, "global": False}, headers={"Retry-After": "2"}),
         httpx.Response(200, json={"id": "10", "name": "general", "type": 0}),
     ]
-    client = make_client(sleeper)
+    client = clocked(sleeper)
     ch = await client.get_channel("10")
     await client.aclose()
     assert ch["name"] == "general"
@@ -83,8 +102,8 @@ async def test_gives_up_after_repeated_429():
 
 
 @respx.mock
-async def test_waits_when_bucket_is_exhausted():
-    sleeper = Sleeper()
+async def test_exhausted_bucket_delays_the_next_request_to_that_path_only():
+    clock = Clock()
     respx.get(f"{API_BASE}/channels/10").mock(
         return_value=httpx.Response(
             200,
@@ -92,10 +111,69 @@ async def test_waits_when_bucket_is_exhausted():
             headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset-After": "0.75"},
         )
     )
-    client = make_client(sleeper)
+    respx.get(f"{API_BASE}/channels/11").mock(return_value=httpx.Response(200, json={"id": "11"}))
+    client = clocked(clock)
+    await client.get_channel("10")
+    assert clock.slept == []  # the data comes back at once
+    await client.get_channel("11")
+    assert clock.slept == []  # another path is not held up
     await client.get_channel("10")
     await client.aclose()
-    assert sleeper.slept == [0.75]
+    assert clock.slept == [0.75]
+
+
+@respx.mock
+async def test_a_429_pauses_every_request_on_the_client():
+    clock = Clock()
+    respx.get(f"{API_BASE}/channels/10").mock(return_value=httpx.Response(429, json={"retry_after": 2.0}))
+    respx.get(f"{API_BASE}/channels/11").mock(return_value=httpx.Response(200, json={"id": "11"}))
+    client = clocked(clock, max_retries=0)
+    with pytest.raises(DiscordError):
+        await client.get_channel("10")
+    assert clock.slept == []  # no wait after the last attempt
+    ch = await client.get_channel("11")
+    await client.aclose()
+    assert ch["id"] == "11"
+    assert clock.slept == [2.0]
+
+
+@respx.mock
+async def test_repeated_429_waits_between_attempts_only():
+    clock = Clock()
+    route = respx.get(f"{API_BASE}/channels/10").mock(return_value=httpx.Response(429, json={"retry_after": 0.5}))
+    client = clocked(clock, max_retries=3)
+    with pytest.raises(DiscordError):
+        await client.get_channel("10")
+    await client.aclose()
+    assert route.call_count == 4
+    assert clock.slept == [0.5, 0.5, 0.5]
+
+
+async def test_requests_in_flight_are_capped_across_callers():
+    import asyncio
+
+    state = {"now": 0, "peak": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        state["now"] += 1
+        state["peak"] = max(state["peak"], state["now"])
+        await asyncio.sleep(0.01)
+        state["now"] -= 1
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DiscordClient("tok", max_in_flight=3, transport=httpx.MockTransport(handler))
+    await asyncio.gather(*(client.get_channel(str(i)) for i in range(12)))
+    await client.aclose()
+    assert state["peak"] == 3
+
+
+@respx.mock
+async def test_get_current_user_reads_users_me():
+    respx.get(f"{API_BASE}/users/@me").mock(return_value=httpx.Response(200, json={"id": "77", "username": "bot"}))
+    client = make_client()
+    me = await client.get_current_user()
+    await client.aclose()
+    assert me["id"] == "77"
 
 
 @respx.mock
@@ -200,3 +278,75 @@ async def test_get_oldest_message_empty_channel_is_none():
     client = make_client()
     assert await client.get_oldest_message("10") is None
     await client.aclose()
+
+
+# --- review fixes: pause re-checked, waits capped, odd values, shared buckets ---------
+
+
+async def test_requests_queued_for_a_slot_wait_out_a_pause():
+    import asyncio
+    import time
+
+    sent: dict[str, float] = {}
+    refused_at: list[float] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/0") and not refused_at:
+            await asyncio.sleep(0.02)
+            refused_at.append(time.monotonic())
+            return httpx.Response(429, json={"retry_after": 0.2})
+        sent.setdefault(path, time.monotonic())
+        await asyncio.sleep(0.01)
+        return httpx.Response(200, json={"id": "x"})
+
+    client = DiscordClient("tok", max_in_flight=1, transport=httpx.MockTransport(handler))
+    await asyncio.gather(*(client.get_channel(str(i)) for i in range(4)))
+    await client.aclose()
+    resume = refused_at[0] + 0.2
+    assert all(t >= resume - 0.005 for p, t in sent.items() if not p.endswith("/0"))
+
+
+@respx.mock
+async def test_a_very_long_pause_fails_fast_instead_of_hanging():
+    clock = Clock()
+    respx.get(f"{API_BASE}/channels/10").mock(return_value=httpx.Response(429, json={"retry_after": 3600}))
+    respx.get(f"{API_BASE}/channels/11").mock(return_value=httpx.Response(200, json={"id": "11"}))
+    client = clocked(clock)
+    with pytest.raises(DiscordError) as e:
+        await client.get_channel("10")
+    assert e.value.status == 429
+    with pytest.raises(DiscordError):
+        await client.get_channel("11")  # still paused: refused at once, nothing sent
+    await client.aclose()
+    assert clock.slept == []
+
+
+@pytest.mark.parametrize("body", [{"retry_after": None}, {"retry_after": [1]}, {"retry_after": "Infinity"}])
+@respx.mock
+async def test_odd_retry_after_values_are_bounded(body):
+    clock = Clock()
+    respx.get(f"{API_BASE}/channels/10").side_effect = [
+        httpx.Response(429, json=body),
+        httpx.Response(200, json={"id": "10"}),
+    ]
+    client = clocked(clock)
+    await client.get_channel("10")
+    await client.aclose()
+    assert len(clock.slept) == 1 and 0 < clock.slept[0] <= 30
+
+
+@respx.mock
+async def test_message_lookups_in_one_channel_share_a_bucket():
+    clock = Clock()
+    respx.get(f"{API_BASE}/channels/10/messages/1").mock(
+        return_value=httpx.Response(
+            200, json={"id": "1"}, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset-After": "0.5"}
+        )
+    )
+    respx.get(f"{API_BASE}/channels/10/messages/2").mock(return_value=httpx.Response(200, json={"id": "2"}))
+    client = clocked(clock)
+    await client.get_message("10", "1")
+    await client.get_message("10", "2")
+    await client.aclose()
+    assert clock.slept == [0.5]

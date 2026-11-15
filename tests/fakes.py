@@ -108,6 +108,10 @@ class FakeClient:
             raise DiscordError(404)
         return self.channels[channel_id]
 
+    async def get_current_user(self) -> dict:
+        self.calls.append("users_me")
+        return {"id": BOT_USER, "username": "bot", "bot": True}
+
     async def get_guild(self, guild_id: str) -> dict:
         if self.fail_guild:
             raise DiscordError(self.fail_guild)

@@ -9,6 +9,8 @@ through a traceback.
 from __future__ import annotations
 
 import asyncio
+import math
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -18,6 +20,8 @@ import httpx
 API_BASE = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (discord-mcp, 0.1.0)"
 PAGE_SIZE = 100
+MAX_PAUSE = 60.0  # longest wait taken from any one Discord answer, in seconds
+MAX_WAIT = 30.0  # a request facing a longer wait fails at once ("try again shortly") instead of hanging
 
 
 class DiscordError(Exception):
@@ -39,34 +43,69 @@ class DiscordClient:
         *,
         max_retries: int = 5,
         timeout: float = 20.0,
+        max_in_flight: int = 8,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        now: Callable[[], float] = time.monotonic,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._http = httpx.AsyncClient(
             base_url=API_BASE,
             headers={"Authorization": f"Bot {bot_token}", "User-Agent": USER_AGENT},
             timeout=timeout,
+            transport=transport,
         )
         self._max_retries = max_retries
         self._sleep = sleep
+        self._now = now
+        # Pacing is shared by every request on this client, so tool calls running in parallel
+        # back off together instead of each retrying on its own. It holds paths and times only.
+        self._in_flight = asyncio.Semaphore(max_in_flight)
+        self._paused_until = 0.0  # every request waits until then (after any 429)
+        self._path_free_at: dict[str, float] = {}  # a path whose rate-limit bucket ran out
+
+    def _delay(self, bucket: str) -> float:
+        return max(self._paused_until, self._path_free_at.get(bucket, 0.0)) - self._now()
+
+    async def _take_slot(self, bucket: str) -> None:
+        """Wait out any pause, then hold one of the in-flight slots.
+
+        The pause is checked again after the slot is taken: a 429 that arrived while this
+        request was queued must hold it back too. A wait longer than MAX_WAIT fails at once.
+        """
+        while True:
+            while (delay := self._delay(bucket)) > 0:
+                if delay > MAX_WAIT:
+                    raise DiscordError(429)
+                await self._sleep(delay)
+            await self._in_flight.acquire()
+            if self._delay(bucket) <= 0:
+                return
+            self._in_flight.release()
 
     async def aclose(self) -> None:
         await self._http.aclose()
 
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        bucket = _bucket(path)
         for _attempt in range(self._max_retries + 1):
+            await self._take_slot(bucket)
             try:
                 resp = await self._http.get(path, params=params)
             except httpx.HTTPError:
                 raise DiscordError(None) from None
+            finally:
+                self._in_flight.release()
 
             if resp.status_code == 429:
-                await self._sleep(_retry_after(resp))
+                self._paused_until = max(self._paused_until, self._now() + _retry_after(resp))
                 continue
             if resp.status_code >= 400:
                 raise DiscordError(resp.status_code)
 
             if resp.headers.get("X-RateLimit-Remaining") == "0":
-                await self._sleep(_float(resp.headers.get("X-RateLimit-Reset-After"), 1.0))
+                now = self._now()
+                self._path_free_at = {b: t for b, t in self._path_free_at.items() if t > now}
+                self._path_free_at[bucket] = now + _float(resp.headers.get("X-RateLimit-Reset-After"), 1.0)
             try:
                 return resp.json()
             except ValueError:
@@ -74,6 +113,10 @@ class DiscordClient:
         raise DiscordError(429)
 
     # --- server structure -------------------------------------------------
+
+    async def get_current_user(self) -> dict:
+        """The bot's own user (its ID is used to check which channels the bot itself can read)."""
+        return await self._get("/users/@me")
 
     async def get_guild(self, guild_id: str) -> dict:
         return await self._get(f"/guilds/{guild_id}")
@@ -155,18 +198,27 @@ class DiscordClient:
             before = page[-1]["id"]
 
 
-def _float(value: str | None, default: float) -> float:
+def _bucket(path: str) -> str:
+    """The rate-limit bucket for a path: Discord limits per route and channel (or server),
+    so a trailing message or user ID is folded away (/channels/1/messages/2 -> /channels/1/messages/:id)."""
+    parts = path.split("/")
+    return "/".join(p if i < 3 or not p.isdigit() else ":id" for i, p in enumerate(parts))
+
+
+def _float(value: object, default: float) -> float:
+    """A wait in seconds from Discord: finite, at least 0 and at most MAX_PAUSE, else `default`."""
     try:
-        return max(0.0, float(value)) if value is not None else default
-    except ValueError:
+        f = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
         return default
+    return min(max(f, 0.0), MAX_PAUSE) if math.isfinite(f) else default
 
 
 def _retry_after(resp: httpx.Response) -> float:
     try:
         body = resp.json()
-        if isinstance(body, dict) and "retry_after" in body:
-            return max(0.0, float(body["retry_after"]))
     except ValueError:
-        pass
+        body = None
+    if isinstance(body, dict) and "retry_after" in body:
+        return _float(body["retry_after"], 1.0)
     return _float(resp.headers.get("Retry-After"), 1.0)
