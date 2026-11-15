@@ -6,19 +6,23 @@ Digest._read_server). Nothing is kept after a request.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from discord_mcp.conversations import _size, brief
-from discord_mcp.conversations import asks as _asks
+from discord_mcp.budget import fewest_to_drop
+from discord_mcp.budget import size as _size
 from discord_mcp.deadlines import find_deadlines
-from discord_mcp.matching import ChannelMessages, Identity, RenderContext, _display_name
+from discord_mcp.matching import ChannelMessages, Identity, RenderContext
+from discord_mcp.messages import THREAD_TYPES
+from discord_mcp.messages import author_id as _author
+from discord_mcp.messages import is_bot as _is_bot
+from discord_mcp.messages import time_of as _time
+from discord_mcp.render import brief, display_name
 from discord_mcp.signals import Words, signals
 from discord_mcp.topics import Topic, build_topics
-
-THREAD_TYPES = frozenset({10, 11, 12})
+from discord_mcp.wording import asks as _asks
+from discord_mcp.wording import is_promise
 
 
 @dataclass
@@ -50,18 +54,6 @@ def group_by_channel(fetched: list[ChannelMessages], names: dict[str, str], ctx:
         channel = channels.get(home, {"id": home})
         out.append(ChannelGroup(channel, names.get(home, home), topics, watch(home)))
     return out
-
-
-def _time(m: dict) -> datetime:
-    return datetime.fromisoformat(m["timestamp"])
-
-
-def _author(m: dict) -> str | None:
-    return (m.get("author") or {}).get("id")
-
-
-def _is_bot(m: dict) -> bool:
-    return bool((m.get("author") or {}).get("bot"))
 
 
 # --- last week's discussion ------------------------------------------------------
@@ -179,36 +171,15 @@ def fit_server_overview(
     for per in range(max(topics_per_channel, 1), 0, -1):
         if fits(payload(per, 0, 0)):
             return payload(per, 0, 0)
-    n = _fit(quiet_first, lambda k: fits(payload(1, k, 0)))
+    n = fewest_to_drop(len(quiet_first), lambda k: fits(payload(1, k, 0)))
     if fits(payload(1, n, 0)):
         return payload(1, n, 0)
-    d = _fit(list(range(len(deadlines))), lambda k: fits(payload(1, len(newest), k)))
+    d = fewest_to_drop(len(deadlines), lambda k: fits(payload(1, len(newest), k)))
     return payload(1, len(newest), d)
 
 
 # --- open loops ---------------------------------------------------------------------
 
-_APOS = "['\u2018\u2019\u02bc`]"
-# A first-person promise across 30 days of messages: stricter than get_my_pings' you_promised,
-# which only reads the last reply in a ping conversation. "will" alone ("that will work") or
-# "later"/"soon" are not promises here, nor are refusals and absences ("I will not be able to",
-# "I'll be on leave").
-_NOT_A_PROMISE = (
-    r"(?!\s+not\b|\s+be\s+(?:on\s+(?:leave|pto|vacation|holiday)|ooo|out|away|off|offline|unavailable"
-    r"|travell?ing|back)\b)"
-)
-OWN_PROMISE = re.compile(
-    rf"\b(?:(?:i{_APOS}ll|i\s+will){_NOT_A_PROMISE}|i{_APOS}?m\s+on\s+it|let\s+me(?!\s+know)|will\s+do"
-    r"|will\s+(?:send|share|do|check|update|get\s+back|look|review|follow\s+up|circle\s+back|add|fix"
-    r"|draft|prepare|reach\s+out|ping|call|confirm|post|upload|write|set\s+up|sort|schedule))\b"
-    r"|^\s*on\s+it\b",
-    re.IGNORECASE,
-)
-
-
-def is_promise(text: str) -> bool:
-    """A first-person promise; a question ("will you send it?") never is."""
-    return bool(text) and not text.rstrip().endswith("?") and bool(OWN_PROMISE.search(text))
 LOOP_ORDER = ("your_promise", "unanswered_ask", "promise_to_you", "stalled")
 CUT_ORDER = ("stalled", "promise_to_you", "unanswered_ask", "your_promise")
 
@@ -218,10 +189,10 @@ def _named(m: dict, me: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for u in m.get("mentions") or []:
         if u.get("id") and u["id"] != me and not u.get("bot"):
-            out[u["id"]] = _display_name(u)
+            out[u["id"]] = display_name(u)
     ref = (m.get("referenced_message") or {}).get("author") or {}
     if ref.get("id") and ref["id"] != me and not ref.get("bot"):
-        out[ref["id"]] = _display_name(ref)
+        out[ref["id"]] = display_name(ref)
     return out
 
 
@@ -303,7 +274,7 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
                             note("your_promise", m, [])
                 elif not _is_bot(m) and _names_me(m, me) and is_promise(text) and age >= lim.nudge_promise_days:
                     if not posted_after(_author(m), _time(m)):
-                        note("promise_to_you", m, [_display_name(m.get("author", {}))])
+                        note("promise_to_you", m, [display_name(m.get("author", {}))])
             for kind, (m, who) in found.items():
                 item(kind, t, m, who)
                 listed.add(t.id)
@@ -318,7 +289,7 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
             if _asks(text) or signals(text, g.extra)[1]:
                 others: list[str] = []
                 for m in t.messages:
-                    name = _display_name(m.get("author", {}))
+                    name = display_name(m.get("author", {}))
                     if _author(m) != me and not _is_bot(m) and name not in others:
                         others.append(name)
                 item("stalled", t, last, others)
@@ -326,20 +297,6 @@ def open_loops(groups: list[ChannelGroup], identity: Identity, ctx: RenderContex
     rank = {k: i for i, k in enumerate(LOOP_ORDER)}
     items.sort(key=lambda i: (rank[i[0]], i[1]))
     return [i[2] for i in items]
-
-
-def _fit(order: list, size_without) -> int:
-    """How many items, removed in `order`, must go for the payload to fit (binary search)."""
-    lo, hi = 0, len(order)
-    if size_without(0):
-        return 0
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if size_without(mid):
-            hi = mid
-        else:
-            lo = mid + 1
-    return lo
 
 
 def fit_loops(loops: list[dict], base: dict, max_chars: int) -> dict:
@@ -365,4 +322,4 @@ def fit_loops(loops: list[dict], base: dict, max_chars: int) -> dict:
             "truncated": bool(base.get("truncated")) or n > 0,
         }
 
-    return payload(_fit(order, lambda n: _size(payload(n)) <= max_chars))
+    return payload(fewest_to_drop(len(order), lambda n: _size(payload(n)) <= max_chars))

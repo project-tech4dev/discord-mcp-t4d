@@ -9,79 +9,25 @@ Pure functions over already-fetched messages; nothing is kept.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-import pydantic_core
+from discord_mcp.budget import size as _size
+from discord_mcp.budget import trim_messages
+from discord_mcp.matching import ChannelMessages, Identity, RenderContext, ping_reason
+from discord_mcp.messages import THREAD_TYPES, content_messages, home_id, is_bot
+from discord_mcp.messages import author_id as _author
+from discord_mcp.messages import msg_id as _id
+from discord_mcp.messages import time_of as _time
+from discord_mcp.render import brief, display_name, render_thread
+from discord_mcp.wording import ping_asks, reply_promises
 
-from discord_mcp.matching import (
-    CONTENT_TYPES,
-    ChannelMessages,
-    Identity,
-    RenderContext,
-    _display_name,
-    _replace_mentions,
-    ping_reason,
-)
-
-THREAD_TYPES = frozenset({10, 11, 12})
 # Ping reasons not asked of the person directly: @everyone anywhere, and @here or a role
 # ping ("group") in a direct_only channel.
 BROADCASTS = frozenset({"everyone", "group"})
 STATUS_ORDER = ("needs_you", "reopened", "check", "fyi", "handled", "announcement")
 # Rows the size budget drops first, from the end of STATUS_ORDER.
 DROPPABLE = frozenset({"fyi", "handled", "announcement"})
-
-# An ask: a question or an ask phrase. Links are ignored ("?" in a query string is not a question).
-ASK = re.compile(r"\?|\b(?:can you|could you|please|pls|any updates?|let me know|when will)\b", re.IGNORECASE)
-_LINK = re.compile(r"(?:https?://|www\.)[^\s<>]*[^\s<>?.,!)\]]", re.IGNORECASE)
-_GREETING = r"(?:hey|hi|hello|hiya|yo|good\s+(?:morning|afternoon|evening))"
-# Looser phrasing that, in a ping, still asks something of the person.
-_PING_ASK = re.compile(
-    r"\b(?:can|could|would|do|are|will|shall)\s+(?:you|u|we)\b|\bplz\b|\bkindly\b|\brequest\s+you\b"
-    r"|\bthoughts\b|\btake\s+a\s+(?:look|peek)\b|\bneed\s+(?:you|your)\b|\blmk\b|\blet\s+(?:me|us)\s+know\b"
-    r"|\bwdyt\b|\basap\b|\burgent\b|\breminder\b|\bfollow(?:ing)?[\s-]?up\b|\bbump\b|\bmind\s+\w+ing\b"
-    r"|\bwaiting\s+(?:on|for)\s+(?:you|your)\b|\bover\s+to\s+you\b|\byou\s+need\s+to\b"
-    # A question without "?": "who can review", "anyone free".
-    r"|\b(?:who|what|when|where|which|how|why)\s+(?:can|could|will|would|is|are|do|does|did|should)\b"
-    r"|\bany(?:one|body)\s+(?:can|could|has|have|wants?|free)\b"
-    # An opening imperative, after an optional greeting: "look at this", "hey, review", "pls check".
-    rf"|^\W*(?:{_GREETING}\W+)?(?:(?:pls|please|plz)\s+)?(?:look|review|check|see|send|share|add|update"
-    r"|confirm|approve|help|reply|respond|fill|sign|join|comment|read|test|fix|merge|call)\b",
-    re.IGNORECASE,
-)
-# Mentions and other Discord tags (channels, custom emoji, timestamps), and markdown links (bounded).
-_TAGS = re.compile(
-    r"<@[!&]?\w+>|<#\d+>|<a?:\w+:\d+>|<t:-?\d+(?::\w)?>|@(?:here|everyone)\b"
-    r"|\[[^\]\n]{0,200}\]\([^)\s]{1,500}\)"
-)
-_ONLY_GREETING = re.compile(rf"^\W*(?:{_GREETING}\W*)?$", re.IGNORECASE)
-
-
-def asks(text: str) -> bool:
-    """A question or ask phrase, ignoring links."""
-    return bool(ASK.search(_LINK.sub(" ", text)))
-
-
-def ping_asks(text: str) -> bool:
-    """Whether a ping asks something of the person. A ping that is only mentions, a link or a
-    greeting calls for attention, so it asks; "cc @you", thanks or a shoutout do not."""
-    bare = _LINK.sub(" ", _TAGS.sub(" ", text)).strip()
-    if not re.sub(r"[\W_]+", "", bare) or _ONLY_GREETING.match(bare):
-        return True
-    return asks(bare) or bool(_PING_ASK.search(bare))
-
-
-# A reply that promises rather than answers. Whole words, any apostrophe style.
-# "let me know" closes an answer, so it is not a promise; "on it" counts only at the start
-# of the reply or as "I'm on it" ("commented on it" is not a promise).
-_APOS = "['\u2018\u2019\u02bc`]"
-PROMISE = re.compile(
-    rf"\b(?:will|i{_APOS}ll|let me(?! know)|later|tomorrow|next week|eod|eow|soon|shortly"
-    rf"|i{_APOS}?m on it|get back)\b|^\s*on it\b",
-    re.IGNORECASE,
-)
 
 Ping = tuple[dict, str, "str | None"]
 
@@ -107,22 +53,10 @@ class _Open:
     message_ids: set[str] = field(default_factory=set)
 
 
-def _time(m: dict) -> datetime:
-    return datetime.fromisoformat(m["timestamp"])
-
-
-def _author(m: dict) -> str | None:
-    return (m.get("author") or {}).get("id")
-
-
-def _content(cm: ChannelMessages) -> list[dict]:
-    return [m for m in cm.messages if m.get("type") in CONTENT_TYPES]
-
-
 def _hit(m: dict, cm: ChannelMessages, identity: Identity, ctx: RenderContext) -> tuple[str, str | None] | None:
     """ping_reason, with @here and role pings downgraded to "group" in direct_only channels."""
     hit = ping_reason(m, identity, ctx.role_names)
-    home = cm.channel.get("parent_id") if cm.channel.get("type") in THREAD_TYPES else cm.channel["id"]
+    home = home_id(cm.channel)
     quiet = home in ctx.direct_only or cm.channel["id"] in ctx.direct_only
     if hit is not None and quiet and hit[0] in ("role", "here"):
         return ("group", hit[1])
@@ -183,12 +117,12 @@ def group_conversations(
 
     for cm in plains:
         open_: list[_Open] = []
-        for m in _content(cm):
+        for m in content_messages(cm.messages):
             hit = _hit(m, cm, identity, ctx)
             tid = (m.get("thread") or {}).get("id")
             if hit is not None and tid in threads:
                 started.add(tid)
-                body = _content(threads[tid])
+                body = content_messages(threads[tid].messages)
                 out.append(
                     Conversation(
                         channel_id=cm.channel["id"],
@@ -220,7 +154,7 @@ def group_conversations(
     for tid, cm in threads.items():
         if tid in started:
             continue
-        body = _content(cm)
+        body = content_messages(cm.messages)
         pings = _pings(cm, body, identity, ctx)
         if pings:
             out.append(Conversation(channel_id=tid, label=cm.label, messages=body, pings=pings))
@@ -230,10 +164,6 @@ def group_conversations(
 
 
 # --- status and rows ------------------------------------------------------------
-
-
-def _id(m: dict) -> int:
-    return int(m["id"])
 
 
 def _mine_after_first_ping(conv: Conversation, identity: Identity) -> list[dict]:
@@ -276,7 +206,7 @@ def _others_after(conv: Conversation, identity: Identity, after: dict) -> list[d
     return [
         m
         for m in conv.messages
-        if _id(m) > _id(after) and _author(m) != identity.user_id and not (m.get("author") or {}).get("bot")
+        if _id(m) > _id(after) and _author(m) != identity.user_id and not is_bot(m)
     ]
 
 
@@ -288,25 +218,9 @@ def check_reasons(conv: Conversation, identity: Identity) -> list[str]:
     reasons = []
     if _others_after(conv, identity, mine[-1]):
         reasons.append("others_after_you")
-    if PROMISE.search(mine[-1].get("content") or ""):
+    if reply_promises(mine[-1].get("content") or ""):
         reasons.append("you_promised")
     return reasons
-
-
-def brief(message: dict, ctx: RenderContext, chars: int) -> dict:
-    author = message.get("author", {})
-    text = _replace_mentions(message.get("content", ""), message, ctx)
-    out = {
-        "author": _display_name(author),
-        "time": message["timestamp"][:16],
-        "text": text[:chars],
-        "link": f"https://discord.com/channels/{ctx.guild_id}/{message['channel_id']}/{message['id']}",
-    }
-    if len(text) > chars:
-        out["text_cut"] = True  # so a URL near the end is never passed on half-written
-    if author.get("bot"):
-        out["is_bot"] = True
-    return out
 
 
 def _ping_item(p: Ping, ctx: RenderContext, chars: int) -> dict:
@@ -322,7 +236,7 @@ def render_row(conv: Conversation, identity: Identity, ctx: RenderContext) -> di
     people: list[str] = []
     for m in conv.messages:
         if _author(m) != identity.user_id:
-            name = _display_name(m.get("author", {}))
+            name = display_name(m.get("author", {}))
             if name not in people:
                 people.append(name)
     row: dict = {
@@ -367,11 +281,6 @@ def render_row(conv: Conversation, identity: Identity, ctx: RenderContext) -> di
 
 
 # --- size budget ----------------------------------------------------------------
-
-
-def _size(payload: dict) -> int:
-    """Characters as MCPServer sends it (indented JSON, non-ASCII kept raw)."""
-    return len(pydantic_core.to_json(payload, indent=2).decode())
 
 
 def _compact(row: dict, chars: int) -> dict:
@@ -477,25 +386,7 @@ def render_full(conv: Conversation, ctx: RenderContext) -> dict:
         kept = msgs
     else:
         kept = head + [m for m in msgs[len(msgs) - max(n - len(head), 0) :] if m not in head]
-    out = []
-    for m in kept:
-        item = brief(m, ctx, ctx.limits.text_chars)
-        ref = m.get("referenced_message")
-        if ref:
-            item["reply_to"] = _replace_mentions(ref.get("content", ""), ref, ctx)[: ctx.limits.reply_chars]
-        out.append(item)
+    out = render_thread(kept, ctx)
     payload = {"where": conv.label, "id": conv.id, "messages": out, "truncated": len(kept) < len(msgs)}
     keep = {out[kept.index(m)]["link"] for m in head}
-    return trim_to_budget(payload, keep=keep, max_chars=ctx.limits.max_result_chars)
-
-
-def trim_to_budget(payload: dict, *, keep: set[str], max_chars: int) -> dict:
-    """Drop the oldest messages (never those whose link is in `keep`, never the newest) until the JSON fits."""
-    msgs = payload["messages"]
-    while _size(payload) > max_chars:
-        drop = next((i for i, m in enumerate(msgs[:-1]) if m["link"] not in keep), None)
-        if drop is None:
-            break
-        del msgs[drop]
-        payload["truncated"] = True
-    return payload
+    return trim_messages(payload, keep=keep, max_chars=ctx.limits.max_result_chars)

@@ -1,10 +1,6 @@
 from discord_mcp.config import Limits
-from discord_mcp.matching import (
-    Identity,
-    RenderContext,
-    ping_reason,
-    render_message,
-)
+from discord_mcp.matching import Identity, RenderContext, ping_reason
+from discord_mcp.render import render_message
 from tests.fakes import GUILD_ID, ME, OTHER, ROLE_DEV, ROLE_OPS, channel, msg, user
 
 ROLE_NAMES = {ROLE_DEV: "dev", ROLE_OPS: "ops"}

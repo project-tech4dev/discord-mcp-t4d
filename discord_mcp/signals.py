@@ -10,14 +10,13 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-_MONTHS = (
-    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
-    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
-)
+from discord_mcp.wording import MONTHS
+
 _DAY = r"\d{1,2}(?:st|nd|rd|th)?"
 _NUM_EDGE_L = r"(?<![\d./:])"  # not part of a version number, URL path or time
 _NUM_EDGE_R = r"(?![\d./:])"
-_MONTHS_NOT_MAY = _MONTHS.replace("|may|", "|")
+assert "|may|" in MONTHS  # "may" alone is too common a word to count as a month
+_MONTHS_NOT_MAY = MONTHS.replace("|may|", "|")
 
 # (label, pattern, strong)
 _BUILT_IN: list[tuple[str, re.Pattern[str], bool]] = [
@@ -25,7 +24,7 @@ _BUILT_IN: list[tuple[str, re.Pattern[str], bool]] = [
         "date",
         re.compile(
             # "17 Nov", "Nov 17", "May 5" (but not "1 may work": "may" counts only before a day)
-            rf"\b(?:{_DAY}\s+(?:{_MONTHS_NOT_MAY})|(?:{_MONTHS})\s+{_DAY})\b"
+            rf"\b(?:{_DAY}\s+(?:{_MONTHS_NOT_MAY})|(?:{MONTHS})\s+{_DAY})\b"
             # 17/11/2026 and 2026-11-17, not inside versions or URLs
             rf"|{_NUM_EDGE_L}\d{{1,2}}/\d{{1,2}}/(?:\d{{4}}|\d{{2}}){_NUM_EDGE_R}"
             rf"|{_NUM_EDGE_L}\d{{4}}-\d\d-\d\d{_NUM_EDGE_R}",

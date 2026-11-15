@@ -10,16 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from discord_mcp.conversations import _size, brief, trim_to_budget
-from discord_mcp.matching import (
-    CONTENT_TYPES,
-    ChannelMessages,
-    Identity,
-    RenderContext,
-    _display_name,
-    _replace_mentions,
-    ping_reason,
-)
+from discord_mcp.budget import size as _size
+from discord_mcp.budget import trim_messages
+from discord_mcp.matching import ChannelMessages, Identity, RenderContext, ping_reason
+from discord_mcp.messages import author_id as _author
+from discord_mcp.messages import content_messages, thread_title
+from discord_mcp.messages import time_of as _time
+from discord_mcp.render import brief, display_name, render_thread
 from discord_mcp.signals import Words, signals
 
 
@@ -37,18 +34,6 @@ class Topic:
         return f"m:{self.channel_id}/{self.messages[0]['id']}"
 
 
-def _time(m: dict) -> datetime:
-    return datetime.fromisoformat(m["timestamp"])
-
-
-def _content(cm: ChannelMessages) -> list[dict]:
-    return [m for m in cm.messages if m.get("type") in CONTENT_TYPES]
-
-
-def _author(m: dict) -> str | None:
-    return (m.get("author") or {}).get("id")
-
-
 def build_topics(
     main: ChannelMessages | None,
     threads: list[ChannelMessages],
@@ -57,13 +42,13 @@ def build_topics(
 ) -> list[Topic]:
     """One topic per thread, then main-channel messages split at quiet gaps and a maximum length."""
     thread_ids = {cm.channel["id"] for cm in threads}
-    main_msgs = _content(main) if main is not None else []
+    main_msgs = content_messages(main.messages) if main is not None else []
     started_here = {m["id"]: m for m in main_msgs if (m.get("thread") or {}).get("id") in thread_ids}
 
     topics: list[Topic] = []
     for cm in threads:
         tid = cm.channel["id"]
-        body = _content(cm)
+        body = content_messages(cm.messages)
         starter = started_here.get(tid) or starters.get(tid)
         if starter is not None and all(m["id"] != starter["id"] for m in body):
             body = [starter, *body]
@@ -128,7 +113,7 @@ def overview_row(
         if _author(m) == identity.user_id:
             posted = True
             continue
-        name = _display_name(m.get("author", {}))
+        name = display_name(m.get("author", {}))
         if name not in people:
             people.append(name)
         hit = ping_reason(m, identity, ctx.role_names)
@@ -185,7 +170,7 @@ def fit_overview(rows: list[tuple[dict, bool]], base: dict, max_chars: int) -> d
 
 
 def _title(t: Topic) -> str:
-    return t.label.split(" › ", 1)[1] if t.kind == "thread" and " › " in t.label else ""
+    return thread_title(t.label) if t.kind == "thread" else ""
 
 
 def search_results(
@@ -243,12 +228,6 @@ def render_topic(t: Topic, ctx: RenderContext) -> dict:
     n = ctx.limits.conversation_max_messages
     msgs = t.messages
     kept = msgs if len(msgs) <= n else [msgs[0], *msgs[len(msgs) - n + 1 :]]
-    out = []
-    for m in kept:
-        item = brief(m, ctx, ctx.limits.text_chars)
-        ref = m.get("referenced_message")
-        if ref:
-            item["reply_to"] = _replace_mentions(ref.get("content", ""), ref, ctx)[: ctx.limits.reply_chars]
-        out.append(item)
+    out = render_thread(kept, ctx)
     payload = {"where": t.label, "id": t.id, "messages": out, "truncated": len(kept) < len(msgs)}
-    return trim_to_budget(payload, keep={out[0]["link"]}, max_chars=ctx.limits.max_result_chars)
+    return trim_messages(payload, keep={out[0]["link"]}, max_chars=ctx.limits.max_result_chars)

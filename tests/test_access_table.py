@@ -17,7 +17,6 @@ import pytest
 from discord_mcp import audit
 from discord_mcp.config import ChannelEntry, Config, Limits
 from discord_mcp.digest import Digest, NotAMember
-from discord_mcp.matching import Identity
 from discord_mcp.permissions import MANAGE_CHANNELS, MANAGE_GUILD, MANAGE_ROLES, VIEW_CHANNEL
 from tests.fakes import GUILD_ID, NOW, OWNER, READ, FakeClient, channel, msg, user
 
@@ -198,7 +197,7 @@ async def test_log_sweep_finds_no_message_text(server):
 
 async def test_channel_mentions_name_only_channels_the_person_can_see(server):
     server.messages["10"].insert(
-        0, msg("700", "10", POSTER, f"see <#14> and <#10>", mentions=[], mention_everyone=True, hours_ago=1)
+        0, msg("700", "10", POSTER, "see <#14> and <#10>", mentions=[], mention_everyone=True, hours_ago=1)
     )
 
     async def text_for(user_id):
