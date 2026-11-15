@@ -16,7 +16,8 @@ import pytest
 
 from discord_mcp import audit
 from discord_mcp.config import ChannelEntry, Config, Limits
-from discord_mcp.digest import Digest, NotAMember
+from discord_mcp.digest import Digest
+from discord_mcp.errors import NotAMember
 from discord_mcp.permissions import MANAGE_CHANNELS, MANAGE_GUILD, MANAGE_ROLES, VIEW_CHANNEL
 from tests.fakes import GUILD_ID, NOW, OWNER, READ, FakeClient, channel, msg, user
 
