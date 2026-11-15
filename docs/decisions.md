@@ -423,3 +423,24 @@ why it was made, and what was rejected.
     afterwards, so no new channel is read. No ReDoS (worst case under 5 ms
     on 4,000-character adversarial input). Test strings that read like
     real messages were replaced with invented ones.
+
+## 2026-11-15 — Shared modules for the five question types (refactor, phase 1)
+
+- **Decision:** move code every view used into four shared modules, with no
+  change in behaviour: `messages.py` (message and channel accessors, links,
+  thread labels), `render.py` (display names, mentions, compact and full
+  message items), `wording.py` (asks, both promise patterns, month names)
+  and `budget.py` (result size, binary-search fitting, message trimming).
+  `matching.py` keeps ping detection and the shared request types
+  (`Identity`, `RenderContext`, `ChannelMessages`). `permissions.py` keeps
+  its own `PRIVATE_THREAD` so the access rules stay standalone.
+- **Why:** pings, channel overview, search, the server brief and open loops
+  had grown their own copies of the same helpers (three `_time`/`_author`,
+  three `THREAD_TYPES`, two link formats, two full-thread renderers, two
+  month regexes, two apostrophe classes), and `brief.py` and `topics.py`
+  imported private helpers from `conversations.py`. The ask and promise
+  rules behind needs_you, you_promised and open loops now sit in one file;
+  signals and deadlines keep their own rules and share the month names.
+- **Rejected:** merging `Conversation` and `Topic` (they answer different
+  questions: what pinged me, and what is happening in a channel).
+

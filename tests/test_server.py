@@ -9,7 +9,7 @@ from discord_mcp.config import ChannelEntry, Config, Limits
 from discord_mcp.digest import Digest
 from discord_mcp.matching import Identity
 from discord_mcp.server import build_server
-from tests.fakes import GUILD_ID, ME, NOW, ROLE_DEV, FakeClient, channel, msg, user
+from tests.fakes import GUILD_ID, ME, NOW, ROLE_DEV, FakeClient, channel, msg
 
 SENTINEL = "PRIVATE-MESSAGE-TEXT-42"
 

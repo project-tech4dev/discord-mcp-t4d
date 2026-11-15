@@ -474,7 +474,7 @@ def test_second_group_ping_does_not_make_me_a_participant():
 
 
 def test_brief_marks_text_that_was_cut():
-    from discord_mcp.conversations import brief
+    from discord_mcp.render import brief
 
     long = msg("100", "10", OTHER, "x" * 50, hours_ago=1)
     assert brief(long, ctx(), 20)["text_cut"] is True

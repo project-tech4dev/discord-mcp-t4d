@@ -12,14 +12,13 @@ import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-_MONTHS = {
+from discord_mcp.wording import MONTHS
+
+_MONTH_NUMBER = {
     "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
     "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
 }  # fmt: skip
-_MONTH = (
-    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
-    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-)
+_MONTH = rf"(?:{MONTHS})"
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _WEEKDAY = r"(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)"
 _ORD = r"(?:st|nd|rd|th)?"
@@ -76,9 +75,9 @@ def _resolve(g: dict, posted: date, date_order: str) -> date | None:
     if g["iso"]:
         return _safe_date(int(g["iy"]), int(g["im"]), int(g["id"]))
     if g["dm"]:
-        return _with_year(_MONTHS[g["dmm"][:3].lower()], int(g["dmd"]), g["dmy"], posted)
+        return _with_year(_MONTH_NUMBER[g["dmm"][:3].lower()], int(g["dmd"]), g["dmy"], posted)
     if g["md"]:
-        return _with_year(_MONTHS[g["mdm"][:3].lower()], int(g["mdd"]), g["mdy"], posted)
+        return _with_year(_MONTH_NUMBER[g["mdm"][:3].lower()], int(g["mdd"]), g["mdy"], posted)
     if g["num"]:
         a, b = int(g["n1"]), int(g["n2"])
         day, month = (a, b) if date_order == "dmy" else (b, a)
