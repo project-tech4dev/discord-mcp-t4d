@@ -179,3 +179,9 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# Local-only digest config and secrets
+config.local.toml
+.env.local
+
+# Internal planning documents (kept out of the public repo)
+PRD*.md

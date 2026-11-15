@@ -1,0 +1,37 @@
+# discord-mcp configuration. No secrets go in this file; they come from
+# environment variables.
+#
+# CHANNEL ALLOWLIST
+# The server reads only the channels listed here, and each person still only
+# sees the channels their Discord roles let them open.
+#
+# The list starts empty on purpose.
+# Rollout begins with the common team channels and a pilot group. Internal team channels follow one team at a time,
+# then cross-team channels with limited access.
+# Leadership and HR channels are added last. Add a channel only after its owner agrees and its members know
+# their messages are read for the digest, and give the bot role access to that
+# channel in Discord at the same time. Record the rollout phase for each entry.
+# Changes take effect after a restart.
+#
+# Example entry:
+#   { id = "123456789012345678", name = "general", phase = 1 },
+allowlist = []
+
+# DENY LIST (use rarely)
+# Blocks one person from one channel even when their roles allow it. It is a
+# second source of truth that people forget to update, so prefer fixing roles.
+# Example entry:
+#   { user_id = "123456789012345678", channel_id = "123456789012345678" },
+deny = []
+
+[limits]
+default_days = 7
+max_days = 14
+max_items = 100
+text_chars = 1500
+reply_chars = 200
+follow_up_count = 10
+follow_up_chars = 300
+channel_default_days = 3
+channel_default_limit = 100
+channel_max_limit = 300
