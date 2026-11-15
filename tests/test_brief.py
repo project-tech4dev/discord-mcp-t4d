@@ -477,3 +477,39 @@ def test_a_question_mark_right_after_a_link_is_still_a_question():
     assert _asks("did you see https://example.com/doc?")
     assert _asks("have you read <https://example.com/doc>?")
     assert not _asks("https://example.com/a?b=1")
+
+
+async def test_leave_and_social_channels_give_no_loops():
+    """Broadcast (direct_only) channels hold leave notices: "I will be on leave, @you" is not a loop."""
+    promise = msg("100", "10", OTHER, "I'll send it to you", hours_ago=3 * DAY, mentions=[user(ME)])
+    mine = ask("101", "10", 2 * DAY)
+    p = await loops(server(c10=[promise, mine]), cfg("10", pings={"10": "direct_only"}))
+    assert p["loops"] == []
+
+
+async def test_leave_channel_threads_give_no_loops():
+    c = server(c10=[])
+    thread(c, "41", "10", [msg("411", "41", OTHER, "I'll send it to you", hours_ago=3 * DAY, mentions=[user(ME)])])
+    assert (await loops(c, cfg("10", pings={"10": "direct_only"})))["loops"] == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I will not be able to make the sync on Friday",
+        "I'll not make it today",
+        "I will be on leave next Tuesday",
+        "I'll be out tomorrow",
+        "I will be unavailable all of next week",
+    ],
+)
+async def test_refusals_and_absences_are_not_promises(text):
+    theirs = msg("100", "10", OTHER, text, hours_ago=3 * DAY, mentions=[user(ME)])
+    mine = msg("101", "20", ME, text, hours_ago=3 * DAY)
+    assert (await loops(server(c10=[theirs], c20=[mine]), cfg("10", "20")))["loops"] == []
+
+
+async def test_will_be_doing_something_is_still_a_promise():
+    m = msg("100", "10", ME, "I will be sending the deck tomorrow", hours_ago=2 * DAY)
+    p = await loops(server(c10=[m]), cfg("10"))
+    assert kinds(p)[0][0] == "your_promise"

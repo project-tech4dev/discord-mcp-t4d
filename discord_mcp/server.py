@@ -40,8 +40,10 @@ BRIEF_RECIPE = (
 
 INSTRUCTIONS = (
     "Returns the signed-in person's Discord conversations from permitted channels they can see. "
-    "get_my_pings groups pings into conversations marked needs_you, reopened, check, handled or "
-    "announcement. Report needs_you and reopened first, then check: the person replied, but someone "
+    "get_my_pings groups pings into conversations marked needs_you, reopened, check, fyi, handled or "
+    "announcement. fyi means the person was named but nothing was asked of them (a cc, thanks, a "
+    "shoutout, a shared link or a notice); mention it only if it matters. "
+    "Report needs_you and reopened first, then check: the person replied, but someone "
     "carried on afterwards (others_after_you) or the reply was a promise (you_promised); read latest "
     "and your_last_reply and say whether it is really closed. For handled ones, read your_last_reply "
     "to judge whether it closed the matter. If latest shows someone else answered, say so. Call get_conversation "
@@ -130,9 +132,9 @@ def build_server(
         title="Get my Discord pings",
         description=(
             "Your Discord conversations that ping you (by name, a role you hold, @here, @everyone, or a "
-            "reply to you), grouped and marked needs_you, reopened, check, handled or announcement, most "
+            "reply to you), grouped and marked needs_you, reopened, check, fyi, handled or announcement, most "
             "urgent first. check means you replied but someone carried on after you or your reply was "
-            "a promise. Reason group is an @here or role ping in a broadcast channel, counted as an "
+            "a promise. fyi means you were pinged but nothing was asked of you. Reason group is an @here or role ping in a broadcast channel, counted as an "
             "announcement. "
             "days defaults to 7 (maximum 30 unless configured otherwise). If compact is true, some rows were shortened to fit, least urgent first; "
             "each shortened row carries compact 1 (texts cut) or 2 (only the newest ping); open "

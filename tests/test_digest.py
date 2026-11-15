@@ -120,7 +120,7 @@ async def test_unrecognised_channel_type_is_dropped(client, caplog):
 
 async def test_public_threads_of_allowlisted_channel_are_read(client):
     t = channel("40", "deploy", 11, parent_id="10", thread_metadata={"archived": False})
-    client.add_channel(t, [msg("400", "40", mention_roles=[ROLE_DEV], hours_ago=3)])
+    client.add_channel(t, [msg("400", "40", content="<@&R> can you deploy?", mention_roles=[ROLE_DEV], hours_ago=3)])
     client.active_threads = [t, channel("41", "other", 11, parent_id="20")]
     client.add_channel(client.active_threads[1], [msg("410", "41", mentions=[user(ME)], hours_ago=1)])
     result = await make(client, config("10")).get_my_pings(IDENT)
