@@ -479,17 +479,17 @@ def test_a_question_mark_right_after_a_link_is_still_a_question():
     assert not _asks("https://example.com/a?b=1")
 
 
-async def test_leave_and_social_channels_give_no_loops():
-    """Broadcast (direct_only) channels hold leave notices: "I will be on leave, @you" is not a loop."""
+async def test_broadcast_channels_still_give_loops():
+    """direct_only only changes how @here and role pings count; work happens there too."""
     promise = msg("100", "10", OTHER, "I'll send it to you", hours_ago=3 * DAY, mentions=[user(ME)])
-    mine = ask("101", "10", 2 * DAY)
+    mine = ask("101", "10", 2 * DAY, to=THIRD)  # a different person, so the two loops stay separate
     p = await loops(server(c10=[promise, mine]), cfg("10", pings={"10": "direct_only"}))
-    assert p["loops"] == []
+    assert sorted(k for k, _ in kinds(p)) == ["promise_to_you", "unanswered_ask"]
 
 
-async def test_leave_channel_threads_give_no_loops():
+async def test_leave_notice_naming_me_is_not_a_loop():
     c = server(c10=[])
-    thread(c, "41", "10", [msg("411", "41", OTHER, "I'll send it to you", hours_ago=3 * DAY, mentions=[user(ME)])])
+    thread(c, "41", "10", [msg("411", "41", OTHER, f"I will be on leave next week <@{ME}>", hours_ago=3 * DAY, mentions=[user(ME)])])
     assert (await loops(c, cfg("10", pings={"10": "direct_only"})))["loops"] == []
 
 
@@ -501,6 +501,11 @@ async def test_leave_channel_threads_give_no_loops():
         "I will be on leave next Tuesday",
         "I'll be out tomorrow",
         "I will be unavailable all of next week",
+        "I'll be back on Monday",
+        "I will be OOO Friday",
+        "I'll be on PTO next week",
+        "I will be on vacation till the 5th",
+        "I'll be on holiday",
     ],
 )
 async def test_refusals_and_absences_are_not_promises(text):
