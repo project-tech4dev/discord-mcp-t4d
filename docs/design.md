@@ -166,8 +166,8 @@ its own 40K budget. Nothing is kept between calls.
   question, ask or strong signal). Roles, @here and bots never owe a reply.
   Broadcast (`direct_only`) channels still give loops: real work happens in
   some of them, and leave notices are caught by wording instead. Refusals
-  and absences ("I will not be able to", "I'll be on leave", "I'll be OOO", "back on Monday") are not
-  promises.
+  and absences ("I will not be able to", "I'll be on leave", "I'll be OOO",
+  "I'll be back on Monday") are not promises.
 - **Size:** `get_my_pings` has its own budget, `pings_max_chars` (default
   40,000, at most 200,000). When over it, announcement, handled and fyi rows go
   first; then the least urgent rows are shortened, one at a time and only as
