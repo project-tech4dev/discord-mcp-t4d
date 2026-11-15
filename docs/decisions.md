@@ -163,3 +163,17 @@ why it was made, and what was rejected.
   itself, or a thread's parent). Deferred: unknown keys inside an allowlist
   entry are still ignored (a typo fails safe, as `all`), and the overview's
   `your_part` still counts a `group` ping as `pinged`.
+
+## 2026-11-15 — Links on every item; shared URLs passed on with care
+
+- **Decision:** the instructions to Claude ask for the Discord link on every
+  message or conversation it mentions. URLs that people share (blogs, docs,
+  forms) may be passed on exactly as written, credited to their author, never
+  changed, hidden behind other text or presented as recommended. Message text
+  that the server cut short is marked `text_cut`, and URLs are only passed on
+  from text that was not cut.
+- **Why:** summaries without links were much less useful. Shared URLs come
+  from untrusted message text, so a phishing link must not read as an action
+  item, and a URL cut at the length limit must not be passed on half-written.
+- **Rejected:** a separate server-side list of URLs per message with their
+  hosts (possible later hardening).

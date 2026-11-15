@@ -202,12 +202,15 @@ def status_of(conv: Conversation, identity: Identity) -> str:
 
 def brief(message: dict, ctx: RenderContext, chars: int) -> dict:
     author = message.get("author", {})
+    text = _replace_mentions(message.get("content", ""), message, ctx)
     out = {
         "author": _display_name(author),
         "time": message["timestamp"][:16],
-        "text": _replace_mentions(message.get("content", ""), message, ctx)[:chars],
+        "text": text[:chars],
         "link": f"https://discord.com/channels/{ctx.guild_id}/{message['channel_id']}/{message['id']}",
     }
+    if len(text) > chars:
+        out["text_cut"] = True  # so a URL near the end is never passed on half-written
     if author.get("bot"):
         out["is_bot"] = True
     return out

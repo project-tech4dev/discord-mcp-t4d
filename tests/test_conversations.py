@@ -470,3 +470,11 @@ def test_second_group_ping_does_not_make_me_a_participant():
     second = msg("101", "10", OTHER, "<@&R> back at 3", mention_roles=[ROLE_DEV], hours_ago=4)
     [conv] = quiet_group(plain(first, second, say("102", ME, 3)))
     assert ids(conv) == ["100", "101"]
+
+
+def test_brief_marks_text_that_was_cut():
+    from discord_mcp.conversations import brief
+
+    long = msg("100", "10", OTHER, "x" * 50, hours_ago=1)
+    assert brief(long, ctx(), 20)["text_cut"] is True
+    assert "text_cut" not in brief(long, ctx(), 50)
