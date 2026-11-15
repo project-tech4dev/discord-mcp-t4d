@@ -70,6 +70,15 @@ def _snowflake(value: object, what: str) -> str:
     return value
 
 
+def _known_keys(entries: object, allowed: set[str], what: str) -> None:
+    """A misspelled key inside an entry must fail loudly, not load as a default."""
+    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        raise ConfigError(f"{what} must be a list of {{ ... }} entries")
+    for entry in entries:
+        if set(entry) - allowed:
+            raise ConfigError(f"unknown {what} settings: {sorted(set(entry) - allowed)}")
+
+
 def load_config(path: str | Path) -> Config:
     try:
         raw = tomllib.loads(Path(path).read_text())
@@ -80,6 +89,10 @@ def load_config(path: str | Path) -> Config:
     if unknown_top:
         # A misspelled deny list must never load as an empty one.
         raise ConfigError(f"unknown settings: {sorted(unknown_top)}")
+
+    _known_keys(raw.get("allowlist", []), {"id", "name", "phase", "watch", "pings"}, "allowlist")
+    _known_keys(raw.get("deny_channels", []), {"id", "note"}, "deny_channels")
+    _known_keys(raw.get("deny", []), {"user_id", "channel_id", "note"}, "deny")
 
     allowlist: dict[str, ChannelEntry] = {}
     for entry in raw.get("allowlist", []):

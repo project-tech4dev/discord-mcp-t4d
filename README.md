@@ -250,7 +250,7 @@ with the same `ENCRYPTION_KEY`.
 | --- | --- |
 | Claude Code: `ECONNREFUSED` | Server not running, a typo in `PUBLIC_URL`, or `localhost` resolving to IPv6 (set `HOST=::1`) |
 | `/mcp` asks you to sign in again | The server restarted; this is expected |
-| `skipped_channels` above 0 | Channels you can see but the bot can't read: give the bot's role access, or deny them |
+| `skipped_channels` above 0 | Channels or threads you can see but the bot couldn't read (no access, or a Discord error): give the bot's role access, deny them, or retry |
 | claude.ai: "Couldn't reach this address" | Funnel not running, pointing at a different address than the server listens on (502), or a brand-new address still spreading through DNS (wait about 10 minutes) |
 | claude.ai: connector stops responding | The tunnel dropped (sleep, Wi-Fi change). Check `tailscale funnel status` and whether calls appear in the server's audit lines |
 | Sign-in fails after Discord | The redirect for this `PUBLIC_URL` is missing in the Discord portal, or `OAUTH_REDIRECT_URIS` lacks the caller's callback |

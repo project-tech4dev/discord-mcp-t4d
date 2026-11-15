@@ -715,3 +715,75 @@ async def test_allow_all_direct_only_covers_threads_and_spares_other_channels(cl
     convs = (await make(client, cfg).get_my_pings(IDENT)).payload["conversations"]
     status = {c["id"].split("/")[0]: c["status"] for c in convs}
     assert status == {"30": "announcement", "31": "announcement", "40": "needs_you"}
+
+
+async def test_overview_counts_a_thread_it_could_not_fetch(client):
+    overview_client(client)
+    client.fail["40"] = 500
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=7)).payload
+    assert p["skipped_channels"] == 1
+    assert all(t["id"] != "t:40" for t in p["topics"])
+
+
+async def test_allow_all_failed_membership_lookup_does_not_reveal_private_thread(client, caplog):
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    t = channel("43", "hush", 12, parent_id="10")
+    client.add_channel(t, [msg("430", "43", mentions=[user(ME)], hours_ago=1)])
+    client.active_threads = [t]
+    client.fail["43"] = 500
+    result = await make(client, allow_all("20")).get_my_pings(IDENT)
+    assert result.payload["skipped_channels"] == 0
+    assert all("43" not in line["channel_ids"] for line in audit_lines(caplog))
+
+
+async def test_overview_counts_a_thread_that_failed_the_access_step(client):
+    overview_client(client)
+    t = channel("43", "hush", 12, parent_id="10")
+    client.add_channel(t, [msg("430", "43", hours_ago=1)])
+    client.active_threads = [*client.active_threads, t]
+    client.fail["43"] = 500
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=7)).payload
+    assert p["skipped_channels"] == 1
+
+
+async def test_overview_counts_a_main_channel_it_could_not_fetch(client):
+    overview_client(client)
+    original = client.get_messages_since
+
+    async def flaky(channel_id, cutoff, max_count=None):
+        if channel_id == "10":
+            raise DiscordError(500)
+        return await original(channel_id, cutoff, max_count)
+
+    client.get_messages_since = flaky
+    p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=7)).payload
+    assert p["skipped_channels"] == 1
+    assert [t["id"] for t in p["topics"]] == ["t:40"]
+
+
+async def test_overview_direct_only_channel_ignores_group_pings_in_your_part(client):
+    client.add_channel(channel("30", "leave", parent_id="1"), [
+        msg("300", "30", content="<@&R> out", mention_roles=[ROLE_DEV], hours_ago=2),
+    ])
+    cfg = Config(allowlist={"30": ChannelEntry("30", None, 1, pings="direct_only")}, deny=frozenset())
+    p = (await make(client, cfg).get_channel_overview(IDENT, "30", days=7)).payload
+    assert p["topics"][0]["your_part"] == "none"
+
+
+async def test_overview_here_ping_in_normal_channel_counts_as_pinged(client):
+    client.add_channel(channel("30", "dev", parent_id="1"), [
+        msg("300", "30", content="@here review please", mention_everyone=True, hours_ago=2),
+    ])
+    p = (await make(client, config("30")).get_channel_overview(IDENT, "30", days=7)).payload
+    assert p["topics"][0]["your_part"] == "pinged"
+
+
+async def test_search_reports_skipped_and_ignores_old_matches(client):
+    old = msg("5", "10", OTHER, "acme kickoff", hours_ago=900, thread={"id": "5"})
+    client.add_channel(channel("10", "general", parent_id="1"), [*client.messages["10"], old])
+    t = channel("5", "old", 11, parent_id="10", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("501", "5", THIRD, "acme update", hours_ago=4)])
+    client.active_threads = [t]
+    p = (await make(client, config("10")).search(IDENT, "10", ["acme"], days=30)).payload
+    assert p["match_count"] == 1
+    assert p["skipped_channels"] == 0

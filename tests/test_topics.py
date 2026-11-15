@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pydantic_core
 
 from discord_mcp.config import Limits
@@ -242,3 +244,31 @@ def test_render_topic_stays_within_budget():
     got = [m["link"].rsplit("/", 1)[1] for m in out["messages"]]
     assert got[0] == "1" and got[-1] == "50"
     assert out["truncated"] is True
+
+
+# --- your_part counts direct pings only -------------------------------------------
+
+
+def test_your_part_ignores_everyone_ping():
+    t = build_topics(main(say("100", 5, text="@everyone standup", mention_everyone=True)), [], {}, ctx())[0]
+    assert row(t)[0]["your_part"] == "none"
+
+
+def test_your_part_ignores_role_ping_in_direct_only_channel():
+    quiet = RenderContext(guild_id=GUILD_ID, role_names={}, channel_names={}, direct_only=frozenset({"10"}))
+    t = build_topics(main(say("100", 5, text="<@&R> out", mention_roles=[ROLE_DEV])), [], {}, quiet)[0]
+    assert overview_row(t, IDENT, quiet, NONE, NOW, quiet_channel=True)[0]["your_part"] == "none"
+
+
+def test_your_part_counts_role_ping_elsewhere():
+    t = build_topics(main(say("100", 5, text="<@&R> review", mention_roles=[ROLE_DEV])), [], {}, ctx())[0]
+    assert row(t)[0]["your_part"] == "pinged"
+
+
+def test_search_ignores_matches_before_the_window():
+    old = say("5", 900, text="acme kickoff", thread={"id": "5"})
+    t = thread("5", "old", say("501", 4, ch="5", text="acme update"))
+    topics = build_topics(None, [t], {"5": old}, ctx())
+    results, count = search_results(topics, Words.build(["acme"]), ctx(), since=NOW - timedelta(days=30))
+    assert count == 1
+    assert [m["text"] for m in results[0]["matches"]] == ["acme update"]

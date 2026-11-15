@@ -213,3 +213,27 @@ why it was made, and what was rejected.
   judging each reply (puts a model and message-text processing in the
   server). False alarms such as "thanks!" are left to Claude.
 - **Spec:** `docs/superpowers/specs/2026-11-15-check-status-design.md`
+
+## 2026-11-15 — Clean-up batch from earlier reviews
+
+- **Overview `your_part`:** "pinged" now means a direct ping, as in
+  `get_my_pings`. @everyone, and @here or role pings in a `direct_only`
+  channel, no longer count.
+- **Config typos inside entries** (allowlist, `deny_channels`, `deny`) are
+  rejected, like unknown top-level settings, so `ping = "direct_only"` can't
+  load silently as the default.
+- **Overview and search report `skipped_channels`:** the main channel or
+  threads in the window that could not be read, which used to vanish silently.
+- **Allow-all mode:** a failed membership lookup on a private thread is now
+  quiet, like `no_access` (security review: a transient Discord error could
+  otherwise reveal that a private thread exists).
+- **Search** counts and shows only matches inside the window (the same cutoff
+  as the fetch). A thread's older first message is still shown in the overview
+  for context, and still counts toward `your_part`.
+- **"due to"** is excluded, but "due to be ..." still counts. Trade-off: "due
+  to the funder by 5pm" is missed; Claude still sees the date.
+- **Config:** `deny` entries accept `note`, and malformed entries (not tables)
+  are config errors instead of crashes.
+- **Still deferred:** starter-lookup failures are not audited (the topic still
+  works without its starter), the duplicated grouping code, and the " › " title
+  split.

@@ -289,8 +289,10 @@ class Digest:
                     view.guild, identity, parents[pid], thread=t, is_thread_member=member
                 ):
                     code = "no_access"
-            if code == "no_access" and self._config.allow_all_channels:
-                continue  # quietly, as for channels: never reveal private threads by count or log line
+            if self._config.allow_all_channels and (code == "no_access" or (code or "").startswith("member_")):
+                # Quietly, as for channels: never reveal private threads by count or log line. A failed
+                # membership lookup is quiet too, since the person may not be in the thread.
+                continue
             if code:
                 self._drop(identity, tool, t["id"], code)
                 skipped += 1
@@ -546,7 +548,7 @@ class Digest:
 
     async def _channel_topics(
         self, identity: Identity, tool: str, channel_id: str, days: int
-    ) -> tuple[_View, dict, list[Topic], bool, list[str]]:
+    ) -> tuple[_View, dict, list[Topic], bool, list[str], int, datetime]:
         """Topics in one channel and its threads. Raises AccessDenied before any message is fetched."""
         if not self._may_read(channel_id):
             raise AccessDenied("channel is not available")
@@ -555,7 +557,7 @@ class Digest:
             raise AccessDenied("channel is not available")
         parent = view.visible[0]
         cutoff = self._clock() - timedelta(days=days)
-        threads, failed, _ = await self._threads(identity, tool, view, cutoff)
+        threads, failed, t_skipped = await self._threads(identity, tool, view, cutoff)
         if parent["id"] in failed:
             raise AccessDenied("channel is not available")
 
@@ -570,8 +572,10 @@ class Digest:
         name = parent.get("name", parent["id"])
         main_fetch: list[ChannelMessages] = []
         if parent.get("type") in TEXT_TYPES:
-            main_fetch, _ = await self._fetch(identity, tool, [(parent, name)], cutoff, main_cap)
-        thread_cms, _ = await self._fetch(
+            main_fetch, main_skipped = await self._fetch(identity, tool, [(parent, name)], cutoff, main_cap)
+        else:
+            main_skipped = 0
+        thread_cms, skipped_threads = await self._fetch(
             identity, tool, [(t, f"{name} › {t.get('name', t['id'])}") for t in threads], cutoff, thread_cap
         )
         fetched = main_fetch + thread_cms
@@ -598,7 +602,8 @@ class Digest:
         starters = {tid: m for tid, m in await asyncio.gather(*(starter(t) for t in old_threads)) if m}
 
         topics = build_topics(main, thread_cms, starters, self._context(view))
-        return view, parent, topics, capped, [cm.channel["id"] for cm in fetched]
+        skipped = t_skipped + main_skipped + skipped_threads
+        return view, parent, topics, capped, [cm.channel["id"] for cm in fetched], skipped, cutoff
 
     async def get_channel_overview(
         self,
@@ -611,15 +616,24 @@ class Digest:
         tool = "get_channel_overview"
         days = self._days(days, self._limits.default_days, self._limits.overview_max_days)
         look_for = self._words(look_for or [], 20, "look_for")
-        view, parent, topics, capped, fetched = await self._channel_topics(identity, tool, channel_id, days)
+        view, parent, topics, capped, fetched, skipped, _ = await self._channel_topics(
+            identity, tool, channel_id, days
+        )
         ctx = self._context(view)
         entry = self._config.allowlist.get(channel_id)
         extra = Words.build([*(entry.watch if entry else ()), *look_for])
         now = self._clock()
-        rows = [overview_row(t, identity, ctx, extra, now) for t in topics]
+        quiet = parent["id"] in ctx.direct_only
+        rows = [overview_row(t, identity, ctx, extra, now, quiet_channel=quiet) for t in topics]
         if only_mine:
             rows = [r for r in rows if r[0]["your_part"] != "none"]
-        base = {"channel": parent.get("name", parent["id"]), "days": days, "look_for": look_for, "truncated": capped}
+        base = {
+            "channel": parent.get("name", parent["id"]),
+            "days": days,
+            "look_for": look_for,
+            "skipped_channels": skipped,
+            "truncated": capped,
+        }
         return ToolResult(fit_overview(rows, base, self._limits.max_result_chars), fetched)
 
     async def search(
@@ -630,7 +644,15 @@ class Digest:
         words = self._words(words, 10, "words")
         if not words:
             raise InputError("words must be a list of at most 10 words, each 2 to 40 characters")
-        view, parent, topics, capped, fetched = await self._channel_topics(identity, tool, channel_id, days)
-        results, count = search_results(topics, Words.build(words), self._context(view))
-        base = {"channel": parent.get("name", parent["id"]), "days": days, "match_count": count, "truncated": capped}
+        view, parent, topics, capped, fetched, skipped, cutoff = await self._channel_topics(
+            identity, tool, channel_id, days
+        )
+        results, count = search_results(topics, Words.build(words), self._context(view), since=cutoff)
+        base = {
+            "channel": parent.get("name", parent["id"]),
+            "days": days,
+            "match_count": count,
+            "skipped_channels": skipped,
+            "truncated": capped,
+        }
         return ToolResult(fit_search(results, base, self._limits.max_result_chars), fetched)

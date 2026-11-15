@@ -98,7 +98,7 @@ def _item(m: dict, ctx: RenderContext, chars: int, extra: Words) -> tuple[dict, 
 
 
 def overview_row(
-    t: Topic, identity: Identity, ctx: RenderContext, extra: Words, now: datetime
+    t: Topic, identity: Identity, ctx: RenderContext, extra: Words, now: datetime, quiet_channel: bool = False
 ) -> tuple[dict, bool]:
     """A compact row for one topic, and whether it carries a strong signal."""
     lim = ctx.limits
@@ -131,7 +131,10 @@ def overview_row(
         name = _display_name(m.get("author", {}))
         if name not in people:
             people.append(name)
-        pinged = pinged or ping_reason(m, identity, ctx.role_names) is not None
+        hit = ping_reason(m, identity, ctx.role_names)
+        # Like get_my_pings: @everyone, and @here or role pings in a direct_only channel, don't count.
+        direct = hit is not None and hit[0] != "everyone" and not (quiet_channel and hit[0] in ("role", "here"))
+        pinged = pinged or direct
     part = {(True, True): "pinged_and_posted", (True, False): "pinged", (False, True): "posted"}.get(
         (pinged, posted), "none"
     )
@@ -185,13 +188,22 @@ def _title(t: Topic) -> str:
     return t.label.split(" › ", 1)[1] if t.kind == "thread" and " › " in t.label else ""
 
 
-def search_results(topics: list[Topic], words: Words, ctx: RenderContext) -> tuple[list[dict], int]:
-    """Topics with matching messages (or a matching thread name), and the total number of matching messages."""
+def search_results(
+    topics: list[Topic], words: Words, ctx: RenderContext, since: datetime | None = None
+) -> tuple[list[dict], int]:
+    """Topics with matching messages in the window (or a matching thread name), and the number of matches.
+
+    A thread's true first message can be older than the window; it is kept for context but not searched.
+    """
     lim = ctx.limits
     results: list[dict] = []
     total = 0
     for t in topics:
-        hits = [m for m in t.messages if words.find(m.get("content", ""))]
+        hits = [
+            m
+            for m in t.messages
+            if (since is None or _time(m) >= since) and words.find(m.get("content", ""))
+        ]
         total += len(hits)
         title_match = bool(_title(t)) and bool(words.find(_title(t)))
         if not hits and not title_match:

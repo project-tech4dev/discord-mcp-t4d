@@ -153,7 +153,8 @@ def build_server(
             "split at day-long quiet gaps. Each row has the opening message, the latest messages, key "
             "messages (dates, deadlines, document links, watch words), quiet_days and your_part. "
             "days defaults to 7 (maximum 30). look_for adds words to flag (up to 20). only_mine keeps "
-            "topics where you were pinged or posted. Open a row with get_conversation using its id." + UNTRUSTED
+            "topics where you were pinged directly or posted. skipped_channels counts the channel or "
+            "threads that could not be read. Open a row with get_conversation using its id." + UNTRUSTED
         ),
         annotations=READ_ONLY,
     )
@@ -170,7 +171,9 @@ def build_server(
         description=(
             "Find topics in one channel you can see by words (1 to 10, matched at the start of a word, "
             "case-insensitive), including thread names. Results are grouped by topic, newest match first. "
-            "days defaults to 14 (maximum 30). Open a result with get_conversation using its id." + UNTRUSTED
+            "days defaults to 14 (maximum 30); only matches inside the window count. skipped_channels "
+            "counts the channel or threads that could not be read. Open a result with get_conversation "
+            "using its id." + UNTRUSTED
         ),
         annotations=READ_ONLY,
     )

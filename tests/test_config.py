@@ -151,3 +151,36 @@ def test_unknown_pings_mode_is_rejected(tmp_path):
     p.write_text('allowlist = [ { id = "10", phase = 1, pings = "direct" } ]\n')
     with pytest.raises(ConfigError, match="pings must be one of"):
         load_config(p)
+
+
+@pytest.mark.parametrize(
+    "toml",
+    [
+        'allowlist = [ { id = "10", phase = 1, ping = "direct_only" } ]\n',
+        'deny_channels = [ { id = "10", nte = "x" } ]\n',
+        'deny = [ { user_id = "1", channel_id = "10", chanel = "x" } ]\n',
+    ],
+)
+def test_unknown_keys_inside_entries_are_rejected(tmp_path, toml):
+    p = tmp_path / "c.toml"
+    p.write_text(toml)
+    with pytest.raises(ConfigError, match=r"unknown \w+ settings: \['(ping|nte|chanel)'\]"):
+        load_config(p)
+
+
+def test_known_optional_keys_still_load(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text(
+        'allowlist = [ { id = "10", name = "x", phase = 1, watch = ["due"], pings = "direct_only" } ]\n'
+        'deny_channels = [ { id = "11", note = "x" } ]\n'
+        'deny = [ { user_id = "1", channel_id = "10", note = "x" } ]\n'
+    )
+    assert load_config(p).allowlist["10"].pings == "direct_only"
+
+
+@pytest.mark.parametrize("toml", ['allowlist = ["10"]\n', 'deny = ["1"]\n', 'allowlist = "10"\n'])
+def test_malformed_entries_are_config_errors(tmp_path, toml):
+    p = tmp_path / "c.toml"
+    p.write_text(toml)
+    with pytest.raises(ConfigError):
+        load_config(p)

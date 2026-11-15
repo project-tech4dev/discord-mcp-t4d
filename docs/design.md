@@ -111,7 +111,8 @@ action"), not only what pinged the person. A topic is a thread (with its true
 first message, even when older than the window) or a stretch of main-channel
 messages split at a 24-hour quiet gap and capped at 72 hours. Each row carries
 the opening message, the latest 2, up to 2 key messages, `quiet_days` and
-`your_part`; `only_mine` keeps the person's own topics.
+`your_part` ("pinged" means a direct ping: not @everyone, and not @here or a role
+ping in a `direct_only` channel); `only_mine` keeps the person's own topics.
 
 The server spots signals mechanically and never decides "needs action":
 strong signals (explicit dates, deadline/due/EOD/EOW, document links, the

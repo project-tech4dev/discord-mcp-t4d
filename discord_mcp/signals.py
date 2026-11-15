@@ -33,7 +33,7 @@ _BUILT_IN: list[tuple[str, re.Pattern[str], bool]] = [
         ),
         True,
     ),
-    ("deadline", re.compile(r"\b(?:deadline\w*|due|overdue|eod|eow)\b", re.IGNORECASE), True),
+    ("deadline", re.compile(r"\b(?:deadline\w*|due(?!\s+to\b(?!\s+be\b))|overdue|eod|eow)\b", re.IGNORECASE), True),
     ("doc_link", re.compile(r"(?:docs|drive|sheets)\.google\.com|notion\.(?:so|site)", re.IGNORECASE), True),
     (
         "weekday",

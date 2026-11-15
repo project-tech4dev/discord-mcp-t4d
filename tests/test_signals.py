@@ -88,3 +88,17 @@ def test_short_numeric_date_is_weak():
     labels, strong = signals("call on 17/11", NONE)
     assert "numeric_date" in labels
     assert strong is False
+
+
+def test_due_to_is_not_a_deadline():
+    assert signals("delayed due to the rain", NONE) == ([], False)
+
+
+def test_due_with_a_date_is_still_a_deadline():
+    labels, strong = signals("due friday", NONE)
+    assert "deadline" in labels and strong
+
+
+def test_due_to_be_is_still_a_deadline():
+    labels, strong = signals("due to be submitted friday", NONE)
+    assert "deadline" in labels and strong
