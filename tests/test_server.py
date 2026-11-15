@@ -209,3 +209,18 @@ def test_brief_sections_are_pending_deadlines_nudges_then_last_week():
 
     order = [BRIEF_RECIPE.index(s) for s in ("pending items", "deadlines this week", "nudges", "last week:")]
     assert order == sorted(order)
+
+
+def test_brief_caps_highlights_at_five_and_moves_the_rest_to_more_to_check():
+    from discord_mcp.server import BRIEF_RECIPE
+
+    assert "at most 5" in BRIEF_RECIPE
+    order = [BRIEF_RECIPE.index(s) for s in ("nudges", "more to check:", "last week:")]
+    assert order == sorted(order)
+
+
+def test_instructions_explain_rate_limited_channels():
+    from discord_mcp.server import INSTRUCTIONS
+
+    assert "rate_limited_channels" in INSTRUCTIONS
+    assert "incomplete" in INSTRUCTIONS

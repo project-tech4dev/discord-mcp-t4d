@@ -88,6 +88,22 @@ class _ServerRead:
     skipped: int  # channels or threads that could not be read (quiet skips not counted)
     capped: bool  # a channel hit its share of the message budget, so older messages were not read
     unread: set[str]  # channels or threads that could not be read (counted in skipped)
+    rate_limited: int  # of those, how many Discord refused for sending too many requests
+
+
+def _rate_limited(codes) -> int:
+    """How many failures were Discord's rate limit (HTTP 429), not access or errors."""
+    return sum(1 for c in codes if c.endswith("http_429"))
+
+
+def _busy_or_denied(codes) -> Exception:
+    """The error for a channel that could not be read: "try again" if Discord was busy, else not available."""
+    return DiscordError(429) if _rate_limited(codes) else AccessDenied("channel is not available")
+
+
+def _with_rate_limited(base: dict, count: int) -> dict:
+    """Add rate_limited_channels only when some channel was missed that way."""
+    return {**base, "rate_limited_channels": count} if count else base
 
 
 def _snowflake_time(snowflake: str) -> datetime:
@@ -110,6 +126,7 @@ class Digest:
         self._limits = config.limits
         self._clock = clock
         self._concurrency = concurrency
+        self._bot_id: str | None = None  # the bot's own user ID; static, so kept between requests
 
     # --- identity -----------------------------------------------------------
 
@@ -122,6 +139,20 @@ class Digest:
                 raise NotAMember("not a member of the server") from None
             raise
         return Identity(user_id=user_id, role_ids=frozenset(member.get("roles", [])))
+
+    async def _bot_identity(self) -> Identity | None:
+        """The bot's own roles, to skip channels the bot cannot read before asking Discord.
+
+        Each refused request counts toward Discord's invalid-request limit. If the lookup
+        fails, None: channels are then tried as before, and a refusal is skipped as usual.
+        """
+        try:
+            if self._bot_id is None:
+                self._bot_id = str((await self._client.get_current_user())["id"])
+            member = await self._client.get_guild_member(self._guild_id, self._bot_id)
+        except Exception:
+            return None
+        return Identity(user_id=self._bot_id, role_ids=frozenset(member.get("roles", [])))
 
     # --- helpers ------------------------------------------------------------
 
@@ -192,10 +223,11 @@ class Digest:
         allow_all = self._config.allow_all_channels
         ids = [c for c in self._config.allowlist if wanted is None or c in wanted]
         try:
-            guild_info, roles, guild_channels = await asyncio.gather(
+            guild_info, roles, guild_channels, bot = await asyncio.gather(
                 self._client.get_guild(self._guild_id),
                 self._client.get_guild_roles(self._guild_id),
                 self._client.get_guild_channels(self._guild_id),
+                self._bot_identity(),
             )
             snapshot = GuildSnapshot(
                 guild_id=self._guild_id,
@@ -240,6 +272,8 @@ class Digest:
                 code = "denied"
             elif not self._readable(snapshot, identity, ch):
                 code = "no_access"
+            elif bot is not None and not self._readable(snapshot, bot, ch):
+                code = "bot_no_access"  # the person may read it; the bot may not, so don't ask
             if code:
                 self._drop(identity, tool, cid, code)
                 skipped += 1
@@ -257,8 +291,10 @@ class Digest:
 
     async def _threads(
         self, identity: Identity, tool: str, view: _View, cutoff: datetime
-    ) -> tuple[list[dict], set[str], int]:
-        """Readable threads under visible parents. Returns (threads, parents that failed, threads skipped).
+    ) -> tuple[list[dict], dict[str, str], list[str]]:
+        """Readable threads under visible parents.
+
+        Returns (threads, failed parents with their codes, the codes of threads skipped).
 
         A parent whose thread lookup fails is dropped completely, so a channel
         the bot can no longer read is logged once and never half-read.
@@ -291,7 +327,7 @@ class Digest:
             self._drop(identity, tool, pid, code)
 
         threads: list[dict] = []
-        skipped = 0
+        skipped: list[str] = []
         for t in found.values():
             if t["id"] in self._config.deny_channels:
                 continue  # a denied thread is never read and never mentioned
@@ -323,10 +359,10 @@ class Digest:
                 continue
             if code:
                 self._drop(identity, tool, t["id"], code)
-                skipped += 1
+                skipped.append(code)
             else:
                 threads.append(t)
-        return threads, set(failed), skipped
+        return threads, failed, skipped
 
     async def _fetch(
         self,
@@ -335,25 +371,25 @@ class Digest:
         targets: list[tuple[dict, str]],
         cutoff: datetime,
         max_count: int | None = None,
-    ) -> tuple[list[ChannelMessages], int]:
+    ) -> tuple[list[ChannelMessages], list[str]]:
+        """Messages per target. Returns (what was read, the failure code of each target that wasn't)."""
         cap = self._limits.overview_max_messages if max_count is None else max_count
         sem = asyncio.Semaphore(self._concurrency)
 
-        async def one(ch: dict, label: str) -> ChannelMessages | None:
+        async def one(ch: dict, label: str) -> ChannelMessages | str:
             async with sem:
                 try:
                     newest_first = await self._client.get_messages_since(ch["id"], cutoff, cap)
                 except DiscordError as e:
                     self._drop(identity, tool, ch["id"], e.code)
-                    return None
+                    return e.code
                 except Exception:
                     self._drop(identity, tool, ch["id"], "unexpected")
-                    return None
+                    return "unexpected"
             return ChannelMessages(channel=ch, label=label, messages=list(reversed(newest_first)))
 
         results = await asyncio.gather(*(one(ch, label) for ch, label in targets))
-        ok = [r for r in results if r is not None]
-        return ok, len(results) - len(ok)
+        return [r for r in results if not isinstance(r, str)], [r for r in results if isinstance(r, str)]
 
     def _context(self, view: _View) -> RenderContext:
         return RenderContext(
@@ -398,7 +434,7 @@ class Digest:
         # left unused goes back to the ones that filled their share.
         total = lim.server_request_messages
         cap = min(lim.overview_max_messages, max(1, total // max(len(targets), 1)))
-        fetched, f_skipped = await self._fetch(identity, tool, targets, cutoff, cap)
+        fetched, f_failed = await self._fetch(identity, tool, targets, cutoff, cap)
         caps = {cm.channel["id"]: cap for cm in fetched}
         full = [cm for cm in fetched if len(cm.messages) >= cap]
         spare = total - sum(len(cm.messages) for cm in fetched)
@@ -414,9 +450,10 @@ class Digest:
             view=view,
             ctx=self._context(view),
             fetched=fetched,
-            skipped=view.skipped + len(failed) + t_skipped + f_skipped,
+            skipped=view.skipped + len(failed) + len(t_skipped) + len(f_failed),
             capped=dropped_threads or any(len(cm.messages) >= caps[cm.channel["id"]] for cm in fetched),
             unread=set(failed) | {ch["id"] for ch, _ in targets if ch["id"] not in got},
+            rate_limited=_rate_limited([*failed.values(), *t_skipped, *f_failed]),
         )
 
     async def get_my_pings(
@@ -429,7 +466,7 @@ class Digest:
         rows = [render_row(c, identity, ctx) for c in group_conversations(read.fetched, identity, ctx)]
         payload = fit_budget(
             rows,
-            {"days": days, "skipped_channels": read.skipped},
+            _with_rate_limited({"days": days, "skipped_channels": read.skipped}, read.rate_limited),
             self._limits.pings_max_chars,
             compact_chars=self._limits.summary_chars,
         )
@@ -487,8 +524,8 @@ class Digest:
         # Look up only the link's own channel (or a thread's parent), not every channel on the server.
         try:
             meta = await self._client.get_channel(channel_id)
-        except DiscordError:
-            raise AccessDenied("channel is not available") from None
+        except DiscordError as e:
+            raise _busy_or_denied([e.code]) from None
         home = meta.get("parent_id") if meta.get("type") in THREAD_TYPES else channel_id
         if not home or not self._may_read(home):
             raise AccessDenied("channel is not available")
@@ -497,7 +534,9 @@ class Digest:
         threads, failed, _ = await self._threads(identity, tool, view, cutoff)
         readable_threads = {t["id"]: t for t in threads}
 
-        if channel_id in visible and channel_id not in failed:
+        if channel_id in failed:
+            raise _busy_or_denied([failed[channel_id]])
+        if channel_id in visible:
             parent = visible[channel_id]
         elif channel_id in readable_threads:
             parent = visible[readable_threads[channel_id]["parent_id"]]
@@ -508,7 +547,9 @@ class Digest:
         name = parent.get("name", parent["id"])
         targets = [(parent, name)] if parent.get("type") in TEXT_TYPES else []
         targets += [(t, f"{name} › {t.get('name', t['id'])}") for t in threads if t.get("parent_id") == parent["id"]]
-        fetched, _ = await self._fetch(identity, tool, targets, cutoff)
+        fetched, codes = await self._fetch(identity, tool, targets, cutoff)
+        if not fetched and _rate_limited(codes):
+            raise DiscordError(429)
 
         ctx = self._context(view)
         for conv in group_conversations(fetched, identity, ctx):
@@ -523,18 +564,18 @@ class Digest:
         """(view, parent, thread) for one readable thread, checked without fetching any messages."""
         try:
             meta = await self._client.get_channel(thread_id)
-        except DiscordError:
-            raise AccessDenied("channel is not available") from None
+        except DiscordError as e:
+            raise _busy_or_denied([e.code]) from None
         parent_id = meta.get("parent_id")
         if meta.get("type") not in THREAD_TYPES or not self._may_read(parent_id) or thread_id in self._config.deny_channels:
             raise AccessDenied("channel is not available")
         view = await self._view(identity, tool, [parent_id])
         if not view.visible:
             raise AccessDenied("channel is not available")
-        threads, _, _ = await self._threads(identity, tool, view, self._clock() - timedelta(days=days))
+        threads, failed, _ = await self._threads(identity, tool, view, self._clock() - timedelta(days=days))
         thread = next((t for t in threads if t["id"] == thread_id), None)
         if thread is None:
-            raise AccessDenied("channel is not available")
+            raise _busy_or_denied(failed.values())
         return view, view.visible[0], thread
 
     async def _starter(self, parent: dict, thread_id: str) -> dict | None:
@@ -562,9 +603,9 @@ class Digest:
         days = self._limits.overview_max_days
         view, parent, thread = await self._thread_access(identity, tool, thread_id, days)
         label = f"{parent.get('name', parent['id'])} › {thread.get('name', thread_id)}"
-        fetched, _ = await self._fetch(identity, tool, [(thread, label)], self._clock() - timedelta(days=days))
+        fetched, codes = await self._fetch(identity, tool, [(thread, label)], self._clock() - timedelta(days=days))
         if not fetched:
-            raise AccessDenied("channel is not available")
+            raise _busy_or_denied(codes)
         starter = await self._starter(parent, thread_id)
         ctx = self._context(view)
         topics = build_topics(None, fetched, {thread_id: starter} if starter else {}, ctx)
@@ -593,10 +634,10 @@ class Digest:
         window = self._clock() - timedelta(days=days)
         threads, failed, _ = await self._threads(identity, tool, view, window)
         if parent["id"] in failed:
-            raise AccessDenied("channel is not available")
-        fetched, _ = await self._fetch(identity, tool, [(parent, parent.get("name", parent["id"]))], window)
+            raise _busy_or_denied([failed[parent["id"]]])
+        fetched, codes = await self._fetch(identity, tool, [(parent, parent.get("name", parent["id"]))], window)
         if not fetched:
-            raise AccessDenied("channel is not available")
+            raise _busy_or_denied(codes)
         main = fetched[0]
         if anchored:
             main = ChannelMessages(main.channel, main.label, [m for m in main.messages if int(m["id"]) >= int(message_id)])
@@ -612,7 +653,7 @@ class Digest:
 
     async def _channel_topics(
         self, identity: Identity, tool: str, channel_id: str, days: int
-    ) -> tuple[_View, dict, list[Topic], bool, list[str], int, datetime]:
+    ) -> tuple[_View, dict, list[Topic], bool, list[str], int, int, datetime]:
         """Topics in one channel and its threads. Raises AccessDenied before any message is fetched."""
         if not self._may_read(channel_id):
             raise AccessDenied("channel is not available")
@@ -623,7 +664,7 @@ class Digest:
         cutoff = self._clock() - timedelta(days=days)
         threads, failed, t_skipped = await self._threads(identity, tool, view, cutoff)
         if parent["id"] in failed:
-            raise AccessDenied("channel is not available")
+            raise _busy_or_denied([failed[parent["id"]]])  # busy is "try again", not "forbidden"
 
         # Bound the work of one request: the newest threads only, and a shared message budget.
         lim = self._limits
@@ -636,10 +677,10 @@ class Digest:
         name = parent.get("name", parent["id"])
         main_fetch: list[ChannelMessages] = []
         if parent.get("type") in TEXT_TYPES:
-            main_fetch, main_skipped = await self._fetch(identity, tool, [(parent, name)], cutoff, main_cap)
+            main_fetch, main_failed = await self._fetch(identity, tool, [(parent, name)], cutoff, main_cap)
         else:
-            main_skipped = 0
-        thread_cms, skipped_threads = await self._fetch(
+            main_failed = []
+        thread_cms, thread_failed = await self._fetch(
             identity, tool, [(t, f"{name} › {t.get('name', t['id'])}") for t in threads], cutoff, thread_cap
         )
         fetched = main_fetch + thread_cms
@@ -666,8 +707,9 @@ class Digest:
         starters = {tid: m for tid, m in await asyncio.gather(*(starter(t) for t in old_threads)) if m}
 
         topics = build_topics(main, thread_cms, starters, self._context(view))
-        skipped = t_skipped + main_skipped + skipped_threads
-        return view, parent, topics, capped, [cm.channel["id"] for cm in fetched], skipped, cutoff
+        skipped = len(t_skipped) + len(main_failed) + len(thread_failed)
+        limited = _rate_limited([*t_skipped, *main_failed, *thread_failed])
+        return view, parent, topics, capped, [cm.channel["id"] for cm in fetched], skipped, limited, cutoff
 
     async def get_channel_overview(
         self,
@@ -680,7 +722,7 @@ class Digest:
         tool = "get_channel_overview"
         days = self._days(days, self._limits.default_days, self._limits.overview_max_days)
         look_for = self._words(look_for or [], 20, "look_for")
-        view, parent, topics, capped, fetched, skipped, _ = await self._channel_topics(
+        view, parent, topics, capped, fetched, skipped, limited, _ = await self._channel_topics(
             identity, tool, channel_id, days
         )
         ctx = self._context(view)
@@ -698,6 +740,7 @@ class Digest:
             "skipped_channels": skipped,
             "truncated": capped,
         }
+        base = _with_rate_limited(base, limited)
         return ToolResult(fit_overview(rows, base, self._limits.max_result_chars), fetched)
 
     async def search(
@@ -708,7 +751,7 @@ class Digest:
         words = self._words(words, 10, "words")
         if not words:
             raise InputError("words must be a list of at most 10 words, each 2 to 40 characters")
-        view, parent, topics, capped, fetched, skipped, cutoff = await self._channel_topics(
+        view, parent, topics, capped, fetched, skipped, limited, cutoff = await self._channel_topics(
             identity, tool, channel_id, days
         )
         results, count = search_results(topics, Words.build(words), self._context(view), since=cutoff)
@@ -719,6 +762,7 @@ class Digest:
             "skipped_channels": skipped,
             "truncated": capped,
         }
+        base = _with_rate_limited(base, limited)
         return ToolResult(fit_search(results, base, self._limits.max_result_chars), fetched)
 
     # --- server-wide brief ------------------------------------------------------
@@ -772,6 +816,7 @@ class Digest:
             "omitted_deadlines": max(len(deadlines) - cap, 0),
             "truncated": read.capped,
         }
+        base = _with_rate_limited(base, read.rate_limited)
         payload = fit_server_overview(
             entries, deadlines[:cap], base, self._limits.max_result_chars, self._limits.brief_topics_per_channel
         )
@@ -785,5 +830,7 @@ class Digest:
         now = self._clock()
         read = await self._read_server(identity, tool, now - timedelta(days=days))
         found = open_loops(self._groups(read), identity, read.ctx, now)
-        base = {"days": days, "skipped_channels": read.skipped, "truncated": read.capped}
+        base = _with_rate_limited(
+            {"days": days, "skipped_channels": read.skipped, "truncated": read.capped}, read.rate_limited
+        )
         return ToolResult(fit_loops(found, base, self._limits.max_result_chars), [cm.channel["id"] for cm in read.fetched])
