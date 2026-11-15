@@ -407,3 +407,25 @@ why it was made, and what was rejected.
   Security review: nothing Critical/High/Medium; test strings that read like
   real messages were replaced with invented ones; no ReDoS (worst case under
   5 ms on 4,000-character adversarial input).
+
+## 2026-11-15: open loops read broadcast channels again
+
+- **Context:** the first live run after the fyi change showed that skipping
+  `direct_only` channels in `get_open_loops` also dropped real promises and
+  asks from a main team channel that is `direct_only` only because its team
+  role pings are broadcasts.
+- **Decision:** `get_open_loops` reads every channel again. Leave notices
+  are kept out by wording ("I will be on leave", "I will not…" are not
+  promises), which the same live run showed was enough.
+- **Why:** `direct_only` says how @here and role pings count, not whether a
+  channel holds work.
+- **Rejected:** a separate per-channel "no loops" setting (more config to
+  keep right; no case needs it yet). The deadline scan still skips
+  `direct_only` channels; revisit if deadlines in such a channel are missed.
+- **Review outcomes:** code and security review (one reviewer, opus): no
+  Critical, nothing on security (open loops already read every channel
+  through both access gates; `direct_only` only filtered afterwards).
+  Important: common leave wording ("I'll be back on Monday", "OOO", "on
+  PTO", "on vacation", "on holiday") still read as promises once the skip
+  was gone; added to the exception, with tests. Still a promise and
+  accepted: social lines such as "I'll bring cake".
