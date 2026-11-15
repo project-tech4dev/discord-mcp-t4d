@@ -219,3 +219,10 @@ def test_bad_date_order_is_rejected(tmp_path):
     p.write_text('date_order = "ymd"\n')
     with pytest.raises(ConfigError, match="date_order must be"):
         load_config(p)
+
+
+def test_pings_max_chars_has_a_ceiling(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("[limits]\npings_max_chars = 5000000\n")
+    with pytest.raises(ConfigError, match="pings_max_chars"):
+        load_config(p)

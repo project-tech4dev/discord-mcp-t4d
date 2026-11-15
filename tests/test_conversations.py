@@ -594,8 +594,9 @@ def test_budget_shortens_ping_text_before_dropping_rows():
     out = fit_budget(rows, {}, 14000, compact_chars=200)
     assert out["omitted"]["needs_you"] == 0
     assert out["compact"] is True
-    ping = out["conversations"][0]["pings"][0]
+    ping = out["conversations"][-1]["pings"][0]  # the least urgent row is shortened first
     assert len(ping["text"]) == 200 and ping["text_cut"] is True
+    assert len(out["conversations"][0]["pings"][0]["text"]) == 1500  # the most urgent stays whole
     assert len(rows[0]["pings"][0]["text"]) == 1500  # the caller's rows are not changed
 
 
@@ -621,7 +622,7 @@ def test_minimal_compact_level_keeps_every_urgent_row():
     out = fit_budget(rows, {}, 14000, compact_chars=200)
     assert out["omitted"]["needs_you"] == 0 and out["omitted"]["check"] == 0
     assert out["compact_level"] == 2
-    row = out["conversations"][0]
+    row = out["conversations"][-1]  # the least urgent row is cut to its bones first
     assert len(row["pings"]) == 1 and len(row["pings"][0]["text"]) <= 100
     assert row["pings"][0]["link"].startswith("https://x/")
     assert "latest" not in row and "your_last_reply" not in row and "time" not in row["pings"][0]
@@ -643,3 +644,50 @@ def test_budget_drops_low_priority_rows_before_shortening_urgent_ones():
     kept = [r for r in out["conversations"] if r["status"] == "needs_you"]
     assert len(kept) == 5 and all(len(p["text"]) == 1500 for r in kept for p in r["pings"])
     assert out["omitted"]["announcement"] > 0
+
+
+def test_budget_shortens_lowest_priority_rows_first_and_only_as_needed():
+    import pydantic_core
+
+    urgent = [_long_row("needs_you", d) for d in range(1, 4)]
+    checks = [_long_row("check", d) for d in range(1, 13)]
+    full = fit_budget(urgent + checks, {}, 10**6)
+    budget = len(pydantic_core.to_json(full, indent=2)) - 4000
+    out = fit_budget(urgent + checks, {}, budget, compact_chars=200)
+    rows = out["conversations"]
+    assert len(rows) == 15 and out["omitted"]["check"] == 0
+    assert all(len(p["text"]) == 1500 for r in rows if r["status"] == "needs_you" for p in r["pings"])
+    shortened = [r for r in rows if any(p.get("text_cut") for p in r["pings"])]
+    assert 0 < len(shortened) < 12
+    assert all(r["status"] == "check" for r in shortened)
+
+
+def _near_row(status, when, n):
+    ping = {"author": "a", "time": "t", "text": "z" * (201 + n % 5), "link": f"https://x/{when}", "reason": "mention"}
+    return {"status": status, "last_activity": f"2026-11-{when:02d}T00:00", "pings": [ping, dict(ping)],
+            "your_last_reply": {"author": "me", "time": "t", "text": "y" * 203, "link": f"https://y/{when}"}}
+
+
+def test_no_urgent_row_is_dropped_while_shortening_would_fit():
+    import pydantic_core
+
+    rows = [_near_row("needs_you" if i % 3 else "check", (i % 28) + 1, i) for i in range(40)]
+    for budget in range(6000, 30000, 37):
+        out = fit_budget(rows, {}, budget, compact_chars=200)
+        assert len(pydantic_core.to_json(out, indent=2)) <= budget
+        if any(out["omitted"].values()):
+            # a row was dropped only because every kept row was already as short as it gets
+            assert all(r.get("compact") == 2 for r in out["conversations"])
+
+
+def test_shortened_rows_are_marked_and_whole_rows_are_not():
+    import pydantic_core
+
+    rows = [_long_row("needs_you", d) for d in range(1, 4)] + [_long_row("check", d) for d in range(4, 16)]
+    full = len(pydantic_core.to_json(fit_budget(rows, {}, 10**6), indent=2))
+    out = fit_budget(rows, {}, full - 4000, compact_chars=200)
+    marks = [r.get("compact") for r in out["conversations"]]
+    assert marks[0] is None
+    assert any(m in (1, 2) for m in marks)
+    first_marked = next(i for i, m in enumerate(marks) if m)
+    assert all(m for m in marks[first_marked:])  # shortened rows are the least urgent, at the end

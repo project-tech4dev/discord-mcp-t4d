@@ -858,3 +858,10 @@ async def test_thread_cap_keeps_the_newest_threads():
     got = sorted(cm.channel["id"] for cm in read.fetched if cm.channel["id"] != "10")
     assert got == ["507", "508", "509"]
     assert read.capped is True
+
+
+async def test_pings_use_their_own_size_limit(client):
+    small = await make(client, config("10", pings_max_chars=400)).get_my_pings(IDENT)
+    big = await make(client, config("10", max_result_chars=400, pings_max_chars=100000)).get_my_pings(IDENT)
+    assert small.payload["truncated"] is True
+    assert big.payload["truncated"] is False
