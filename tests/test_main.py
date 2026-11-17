@@ -31,3 +31,11 @@ def test_uvicorn_has_no_access_log_and_adds_no_handlers():
         assert SENTINEL not in stream.getvalue()
     finally:
         restore()
+
+
+def test_uvicorn_runs_one_worker_even_if_the_environment_asks_for_more(monkeypatch):
+    # Sign-in state lives in this process's memory (issue #3): a second worker would
+    # refuse the first one's codes and refresh tokens. WEB_CONCURRENCY must not add one.
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    cfg = uvicorn_config(dummy_app, load_settings(ENV))
+    assert cfg.workers == 1

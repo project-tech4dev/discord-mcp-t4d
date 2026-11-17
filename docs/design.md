@@ -41,10 +41,10 @@ Discord does not support the registration methods MCP clients use.
   a sign-in lasts 30 days from first sign-in without sliding. Codes and refresh
   tokens work once. No token database exists; changing the key signs everyone out.
 - Run exactly one server process. Used codes and refresh tokens are remembered
-  in memory, so a second worker or replica would let them be reused. Codes and
-  refresh tokens also carry the process's random boot id, so after a restart
-  they stop working and everyone signs in again (access tokens still last
-  their hour).
+  in memory, and codes and refresh tokens carry the process's random boot id.
+  A second worker or replica refuses the first one's codes and refresh tokens,
+  so sign-in breaks (it fails closed). After a restart they stop working and
+  everyone signs in again (access tokens still last their hour).
 - Roles are read by the bot on every request, so losing a role or leaving the
   server takes effect immediately.
 
@@ -181,4 +181,8 @@ Design: `docs/superpowers/specs/2026-11-15-server-wide-brief-design.md`.
 
 - Stage 1 (done): fetching, matching, tools; local stdio only.
 - Stage 2 (done): Discord sign-in and the full permission calculation.
-- Stage 3: deployment as a remote connector.
+- Stage 3: deployment as a remote connector. **Host requirement:** one
+  always-on process: a single VM, or one container or machine with a minimum
+  and maximum of 1 instance. No load-balanced replicas and no scale-to-zero
+  (for example Cloud Run unless min = max = 1, or serverless functions); the
+  reasons are under Sign-in.
