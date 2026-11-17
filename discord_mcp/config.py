@@ -52,6 +52,8 @@ class Limits:
     nudge_stall_days: int = 3
     brief_topics_per_channel: int = 3
     brief_max_deadlines: int = 50
+    # Tool calls one person may make in any 60 seconds (issue #4: a looping client cannot flood Discord).
+    calls_per_minute: int = 30
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ class Config:
     timezone: str = "UTC"
     # How "20/11" is read: day first ("dmy") or month first ("mdy").
     date_order: str = "dmy"
+    # Role IDs allowed to use the server at all. Empty: every member of the Discord server.
+    allowed_roles: frozenset[str] = frozenset()
 
 
 def _valid_timezone(name: object) -> bool:
@@ -110,7 +114,7 @@ def load_config(path: str | Path) -> Config:
     except (OSError, tomllib.TOMLDecodeError) as e:
         raise ConfigError(f"cannot read config file ({type(e).__name__})") from None
 
-    unknown_top = set(raw) - {"allowlist", "deny", "limits", "allow_all_channels", "deny_channels", "timezone", "date_order"}
+    unknown_top = set(raw) - {"allowlist", "deny", "limits", "allow_all_channels", "deny_channels", "timezone", "date_order", "allowed_roles"}
     if unknown_top:
         # A misspelled deny list must never load as an empty one.
         raise ConfigError(f"unknown settings: {sorted(unknown_top)}")
@@ -157,6 +161,11 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError("deny_channels must be a list of { id = \"...\" } entries")
     denied = frozenset(_snowflake(d.get("id"), "deny_channels id") for d in deny_channels)
 
+    roles = raw.get("allowed_roles", [])
+    if not isinstance(roles, list):
+        raise ConfigError('allowed_roles must be a list of role IDs such as ["123"]')
+    allowed_roles = frozenset(_snowflake(r, "allowed_roles entry") for r in roles)
+
     tz = raw.get("timezone", "UTC")
     if not _valid_timezone(tz):
         raise ConfigError("timezone must be an IANA time zone name such as Europe/Berlin or UTC")
@@ -172,4 +181,5 @@ def load_config(path: str | Path) -> Config:
         deny_channels=denied,
         timezone=tz,
         date_order=date_order,
+        allowed_roles=allowed_roles,
     )

@@ -47,6 +47,14 @@ allow_all_channels = false
 #   { id = "123456789012345678", note = "leadership" },
 deny_channels = []
 
+# ALLOWED ROLES
+# Only members holding at least one of these roles may sign in or use any
+# tool. Empty: every member of the Discord server. Checked on every call, so
+# removing the role takes effect at once.
+# Example:
+#   allowed_roles = ["123456789012345678"]
+allowed_roles = []
+
 # DENY LIST (use rarely)
 # Blocks one person from one channel even when their roles allow it. It is a
 # second source of truth that people forget to update, so prefer fixing roles.
@@ -100,3 +108,5 @@ nudge_promise_days = 2
 nudge_stall_days = 3
 brief_topics_per_channel = 3
 brief_max_deadlines = 50
+# Tool calls one person may make in any 60 seconds.
+calls_per_minute = 30

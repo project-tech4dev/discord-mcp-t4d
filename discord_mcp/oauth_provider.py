@@ -40,7 +40,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from discord_mcp import audit
-from discord_mcp.errors import NotAMember
+from discord_mcp.errors import NotAMember, RoleNotAllowed
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.tokens import ReplayGuard, TokenBox
 
@@ -53,6 +53,7 @@ COOKIE = "dmcp_signin"
 _PAGE = "<!doctype html><meta charset=utf-8><title>Sign-in</title><p>{}</p>"
 BAD_REQUEST = "Sign-in could not be completed. Close this window and try connecting again."
 NOT_MEMBER = "Your Discord account is not a member of this Discord server."
+NO_ROLE = "Your Discord account does not have a role allowed to use this server."
 
 
 def _page(text: str, status: int) -> Response:
@@ -164,6 +165,8 @@ class SignInProvider:
             return fail(BAD_REQUEST, 400, "discord_exchange")
         try:
             await self._check_member(user_id)
+        except RoleNotAllowed:
+            return fail(NO_ROLE, 403, "no_role", user_id)
         except NotAMember:
             return fail(NOT_MEMBER, 403, "not_member", user_id)
         except Exception:
