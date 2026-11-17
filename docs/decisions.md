@@ -593,6 +593,22 @@ why it was made, and what was rejected.
   and the design already says pings come from Discord's own fields.
 - **Rejected:** dropping the text check (replies that name the person would
   become `reply`), #9 nicknames (REST message reads carry no `member` data;
-  a lookup per author costs requests), #13 archived private threads (none
-  in use, and listing them needs Manage Threads), and #12 attachment and
+  a lookup per author costs requests), #13 private threads (see the next
+  entry), and #12 attachment and
   forward text for now (under 0.5% of messages; deferred).
+
+## 2026-11-17 — Private threads stay out of reach: no Manage Threads (#13)
+
+- **Decision:** the bot does not get Manage Threads, so private threads it
+  has not joined, and every archived private thread, are not read by any
+  tool. The README says so.
+- **Why:** the earlier count of none was wrong: without the permission,
+  Discord hides private threads from the bot. Measured briefly with the
+  permission (counts only): 4 active private threads, 35 archived (5 active
+  in the last 90 days, none in the last 30), in 9 of 27 permitted channels.
+  That is real but light use, and Manage Threads would let a leaked token
+  archive, lock and delete threads. The code still never writes.
+- **Rejected:** keeping Manage Threads (covers active private threads with
+  no code change, but a much broader permission for a read-only bot), and
+  listing archived private threads on every server-wide call (27 more
+  requests per call for threads that were all quiet in the last 30 days).
