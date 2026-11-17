@@ -612,3 +612,18 @@ why it was made, and what was rejected.
   no code change, but a much broader permission for a read-only bot), and
   listing archived private threads on every server-wide call (27 more
   requests per call for threads that were all quiet in the last 30 days).
+
+## 2026-11-17 — A failed active-thread lookup fails the call
+
+- **Decision:** when the server-wide list of active threads cannot be read,
+  the whole call fails with "Discord could not be reached", as a failed role
+  or channel-list lookup already does (#6). The same holds when
+  `get_conversation` looks up a link's home: only the lookup of the link's
+  own id can still answer "not available".
+- **Why:** that one lookup covers every channel. Before, every parent was
+  dropped, so `get_my_pings` answered "nothing needs you" (with no warning
+  unless the error was a 429), and one-channel tools said "not available to
+  you". Found in a code review of main.
+- **Rejected:** dropping only the threads and still reading the main
+  channels (a half-read inbox that looks complete), and a warning field on an
+  otherwise normal result (Claude may not pass it on).

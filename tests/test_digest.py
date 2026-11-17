@@ -1195,3 +1195,65 @@ async def test_active_thread_link_reads_the_active_thread_list_once(client):
     client.get_active_threads = counted
     await make(client, config("10")).get_conversation(IDENT, "t:40")
     assert len(calls) == 1
+
+
+def fail_active_threads(client, status):
+    async def failing(guild_id):
+        raise DiscordError(status)
+
+    client.get_active_threads = failing
+
+
+@pytest.mark.parametrize("status", [None, 500, 429])
+async def test_active_threads_lookup_failure_is_an_error_not_an_empty_inbox(client, status):
+    # The server-wide thread list covers every channel; without it nothing is read, and an empty
+    # result would read as "nothing needs you". Fail the call like a failed role lookup (#6).
+    client.add_channel(channel("10", "general"), [msg("100", "10", mentions=[user(ME)], content="can you check?", hours_ago=1)])
+    fail_active_threads(client, status)
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_my_pings(IDENT)
+
+
+async def test_active_threads_lookup_failure_is_not_reported_as_not_available(client):
+    client.add_channel(channel("10", "general"), [msg("100", "10", hours_ago=1)])
+    fail_active_threads(client, 500)
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_channel_overview(IDENT, "10")
+
+
+@pytest.mark.parametrize("status", [None, 500])
+async def test_conversation_link_into_a_thread_when_thread_list_fails_is_an_error(client, status):
+    # The thread is not in the server's channel list, so its home is found among active threads.
+    client.add_channel(channel("10", "general"), [])
+    t = channel("41", "topic", 11, parent_id="10")
+    client.add_channel(t, [msg("410", "41", mentions=[user(ME)], hours_ago=1)])
+    client.active_threads = [t]
+    fail_active_threads(client, status)
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_conversation(IDENT, f"{LINK}/41/410")
+
+
+async def test_conversation_link_into_a_channel_when_thread_list_fails_is_an_error(client):
+    client.add_channel(channel("10", "general"), [msg("100", "10", mentions=[user(ME)], hours_ago=1)])
+    fail_active_threads(client, 500)
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_conversation(IDENT, f"{LINK}/10/100")
+
+
+async def test_conversation_link_when_channel_list_fails_is_an_error(client):
+    client.add_channel(channel("10", "general"), [msg("100", "10", mentions=[user(ME)], hours_ago=1)])
+
+    async def failing(guild_id):
+        raise DiscordError(500)
+
+    client.get_guild_channels = failing
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_conversation(IDENT, f"{LINK}/10/100")
+
+
+@pytest.mark.parametrize("status", [None, 429])
+async def test_overview_when_thread_list_fails_is_an_error(client, status):
+    client.add_channel(channel("10", "general"), [msg("100", "10", hours_ago=1)])
+    fail_active_threads(client, status)
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_channel_overview(IDENT, "10")
