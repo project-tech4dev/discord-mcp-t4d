@@ -24,10 +24,14 @@ def uvicorn_config(app, settings: Settings) -> uvicorn.Config:
     # log_config=None stops uvicorn installing its own handlers, which would
     # bypass the audit-only filter. The access log would record request URLs,
     # including the one-time sign-in code, so it stays off.
+    # One worker: sign-in state lives in this process's memory (issue #3).
+    # Server.run() already runs one process; this keeps WEB_CONCURRENCY out
+    # if start-up ever moves to uvicorn.run().
     return uvicorn.Config(
         app,
         host=settings.host,
         port=settings.port,
+        workers=1,
         log_config=None,
         access_log=False,
         server_header=False,
