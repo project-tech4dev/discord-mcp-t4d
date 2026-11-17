@@ -48,7 +48,10 @@ def ping_reason(message: dict, identity: Identity, role_names: dict[str, str]) -
     """Return (reason, role_name) if the message pings the person, else None."""
     if message.get("author", {}).get("id") == identity.user_id:
         return None
-    named_in_text = any(m[1] == identity.user_id for m in USER_MENTION.finditer(message.get("content", "")))
+    # Typed in the text *and* delivered by Discord: a reply that names the person is a mention,
+    # but a code Discord did not deliver (pings suppressed) is not a ping at all (issue #11).
+    delivered = any(u.get("id") == identity.user_id for u in message.get("mentions", []))
+    named_in_text = delivered and any(m[1] == identity.user_id for m in USER_MENTION.finditer(message.get("content", "")))
     ref = message.get("referenced_message")
     is_reply_to_me = bool(ref) and ref.get("author", {}).get("id") == identity.user_id
     if named_in_text:
@@ -56,7 +59,7 @@ def ping_reason(message: dict, identity: Identity, role_names: dict[str, str]) -
     if is_reply_to_me:
         # A reply with "ping on" also lists the person in `mentions`; it is still a reply.
         return ("reply", None)
-    if any(u.get("id") == identity.user_id for u in message.get("mentions", [])):
+    if delivered:
         return ("mention", None)
     for role_id in message.get("mention_roles", []):
         if role_id in identity.role_ids:

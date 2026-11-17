@@ -582,3 +582,17 @@ why it was made, and what was rejected.
 - **Rejected:** discarding the first read when the second fails (it loses
   good messages for nothing), and a new audit status kind beside `dropped`
   (one more pattern for log readers to learn).
+
+## 2026-11-17 — Discord's fields, not the text, decide a ping (#11); issues #9, #12, #13 not done
+
+- **Decision:** a typed `<@id>` counts only when Discord also lists the
+  person in `mentions`. It still marks a reply that names the person as a
+  `mention`, not a `reply`. An empty `channel_ids` filter means every
+  channel (#10).
+- **Why:** a bot post with pings suppressed carries the code in its text,
+  and the design already says pings come from Discord's own fields.
+- **Rejected:** dropping the text check (replies that name the person would
+  become `reply`), #9 nicknames (REST message reads carry no `member` data;
+  a lookup per author costs requests), #13 archived private threads (none
+  in use, and listing them needs Manage Threads), and #12 attachment and
+  forward text for now (under 0.5% of messages; deferred).

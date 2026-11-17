@@ -74,6 +74,17 @@ def test_reply_that_also_names_the_person_is_mention():
     assert reason(reply) == ("mention", None)
 
 
+def test_typed_mention_discord_did_not_deliver_is_not_a_ping():
+    # Issue #11: a bot post with pings suppressed has the code in its text but not in `mentions`.
+    assert reason(msg("1", "10", content=f"<@{ME}> fyi", mentions=[])) is None
+
+
+def test_reply_naming_the_person_without_pinging_them_is_a_reply():
+    mine = msg("1", "10", author_id=ME)
+    reply = msg("2", "10", content=f"<@{ME}> see this", referenced=mine, mentions=[])
+    assert reason(reply) == ("reply", None)
+
+
 def test_reply_to_someone_else_is_not_a_ping():
     theirs = msg("1", "10", author_id=OTHER, content="their question")
     reply = msg("2", "10", content="answer", referenced=theirs)
