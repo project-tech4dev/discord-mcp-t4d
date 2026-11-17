@@ -325,6 +325,20 @@ def test_render_full_keeps_the_first_ping_when_it_is_not_the_first_message():
     assert got[-1] == "170"
 
 
+def test_render_full_keeps_messages_oldest_first_when_the_ping_is_late():
+    # Issue #8: a first ping among the newest messages must not be rendered out of order.
+    from discord_mcp.conversations import render_full
+
+    body = [say(str(100 + i), THIRD, 30 - i * 0.1, "50") for i in range(55)]
+    body.append(ping("155", h=24, ch="50"))
+    body += [say(str(156 + i), OTHER, 23 - i * 0.1, "50") for i in range(4)]
+    conv = group(ChannelMessages(thread("50"), "general › topic", body))[0]
+    got = [m["link"].rsplit("/", 1)[1] for m in render_full(conv, ctx(conversation_max_messages=50))["messages"]]
+    assert len(got) == 50
+    assert got == sorted(got, key=int)
+    assert got[0] == "100" and "155" in got and got[-1] == "159"
+
+
 def test_budget_is_measured_as_the_transport_sends_it():
     import pydantic_core
 

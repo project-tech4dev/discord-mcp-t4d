@@ -377,7 +377,13 @@ def render_full(conv: Conversation, ctx: RenderContext) -> dict:
     if len(msgs) <= n:
         kept = msgs
     else:
-        kept = head + [m for m in msgs[len(msgs) - max(n - len(head), 0) :] if m not in head]
+        # The head, then the newest messages until `n` are kept, rendered oldest first (issue #8).
+        chosen = {id(m) for m in head}
+        for m in reversed(msgs):
+            if len(chosen) >= n:
+                break
+            chosen.add(id(m))
+        kept = [m for m in msgs if id(m) in chosen]
     out = render_thread(kept, ctx)
     payload = {"where": conv.label, "id": conv.id, "messages": out, "truncated": len(kept) < len(msgs)}
     keep = {out[kept.index(m)]["link"] for m in head}

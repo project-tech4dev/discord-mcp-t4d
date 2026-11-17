@@ -637,6 +637,13 @@ async def test_allow_all_server_lookup_failure_is_an_error_not_an_empty_inbox(cl
         await make(client, allow_all()).get_my_pings(IDENT)
 
 
+async def test_allowlist_server_lookup_failure_is_an_error_not_an_empty_inbox(client):
+    # Issue #6: the allowlist mode must fail the call too, not answer "nothing needs you".
+    client.fail_guild = 429
+    with pytest.raises(DiscordError):
+        await make(client, config("10")).get_my_pings(IDENT)
+
+
 async def test_allow_all_private_thread_person_cannot_see_is_not_counted(client, caplog):
     caplog.set_level(logging.INFO, logger="discord_mcp.audit")
     t = channel("43", "hush", 12, parent_id="10")
@@ -758,10 +765,10 @@ async def test_overview_counts_a_main_channel_it_could_not_fetch(client):
     overview_client(client)
     original = client.get_messages_since
 
-    async def flaky(channel_id, cutoff, max_count=None):
+    async def flaky(channel_id, cutoff, max_count=None, before=None):
         if channel_id == "10":
             raise DiscordError(500)
-        return await original(channel_id, cutoff, max_count)
+        return await original(channel_id, cutoff, max_count, before)
 
     client.get_messages_since = flaky
     p = (await make(client, config("10")).get_channel_overview(IDENT, "10", days=7)).payload
@@ -844,6 +851,24 @@ async def test_unused_share_goes_back_to_a_busy_channel():
     main = next(cm for cm in read.fetched if cm.channel["id"] == "10")
     assert len(main.messages) == 1000
     assert read.capped is False
+
+
+async def test_handed_back_budget_continues_where_the_first_read_stopped():
+    # Issue #7: a busy channel's second read starts below its first, so no message is read twice.
+    c = FakeClient()
+    c.add_channel(channel("1", "Team", 4), [])
+    for cid, n in (("10", 30), ("20", 30), ("30", 1)):
+        c.add_channel(channel(cid, f"c{cid}", parent_id="1"), [msg(str(int(cid) * 1000 + i), cid, hours_ago=2 - i * 0.01) for i in range(n)])
+    cfg = Config(allowlist={k: ChannelEntry(k, None, 1) for k in ("10", "20", "30")}, deny=frozenset(),
+                 limits=Limits(server_request_messages=30))
+    read = await make(c, cfg)._reader.read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    for cid in ("10", "20"):
+        assert len(c.returned[cid]) == len(set(c.returned[cid])), "a message was read twice"
+        got = [m["id"] for m in next(cm for cm in read.fetched if cm.channel["id"] == cid).messages]
+        assert got == sorted(got, key=int)  # oldest first
+        assert len(got) == 14  # share of 10, plus half of the 9 the quiet channel left
+        assert got[-1] == str(int(cid) * 1000 + 29)  # the newest message is kept
+    assert sum(len(cm.messages) for cm in read.fetched) <= 30
 
 
 async def test_request_budget_is_a_hard_total():
@@ -1002,10 +1027,10 @@ async def test_opening_a_rate_limited_thread_says_try_again(client):
     d = make(client, config("10"))
     real = client.get_messages_since
 
-    async def busy(channel_id, cutoff, max_count=None):
+    async def busy(channel_id, cutoff, max_count=None, before=None):
         if channel_id == "15":
             raise DiscordError(429)
-        return await real(channel_id, cutoff, max_count)
+        return await real(channel_id, cutoff, max_count, before)
 
     client.get_messages_since = busy
     with pytest.raises(DiscordError):

@@ -92,6 +92,7 @@ class FakeClient:
         self.fail: dict[str, int] = {}  # channel id -> HTTP status to raise
         self.calls: list[str] = []
         self.max_counts: dict[str, int | None] = {}
+        self.returned: dict[str, list[str]] = {}  # channel id -> every message id handed out, in order
 
     def add_channel(self, c: dict, messages: list[dict]) -> None:
         self.channels[c["id"]] = c
@@ -141,12 +142,20 @@ class FakeClient:
         self._maybe_fail(channel_id)
         return self.archived_threads.get(channel_id, [])
 
-    async def get_messages_since(self, channel_id: str, cutoff: datetime, max_count: int | None = None) -> list[dict]:
+    async def get_messages_since(
+        self, channel_id: str, cutoff: datetime, max_count: int | None = None, before: str | None = None
+    ) -> list[dict]:
         self.calls.append(f"messages:{channel_id}")
         self.max_counts[channel_id] = max_count
         self._maybe_fail(channel_id)
-        found = [m for m in self.messages.get(channel_id, []) if datetime.fromisoformat(m["timestamp"]) >= cutoff]
-        return found[:max_count] if max_count else found
+        found = [
+            m
+            for m in self.messages.get(channel_id, [])
+            if datetime.fromisoformat(m["timestamp"]) >= cutoff and (before is None or int(m["id"]) < int(before))
+        ]
+        found = found[:max_count] if max_count else found
+        self.returned.setdefault(channel_id, []).extend(m["id"] for m in found)
+        return found
 
     async def get_message(self, channel_id: str, message_id: str) -> dict:
         self.calls.append(f"message:{channel_id}/{message_id}")

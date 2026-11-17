@@ -556,3 +556,15 @@ why it was made, and what was rejected.
 - **Rejected:** a list of user IDs (it drifts as people join and leave;
   roles are already maintained), and an environment variable (it belongs
   with the other access rules in the config file).
+
+## 2026-11-17 — A failed server lookup fails the call in every mode (#6)
+
+- **Decision:** when the server's details, roles or channel list cannot be
+  read, every tool fails with "Discord could not be reached. Try again
+  shortly.", in allowlist mode as in allow-all mode. Before, allowlist mode
+  dropped each allowlisted channel and returned an empty result.
+- **Why:** an empty `get_my_pings` reads as "nothing needs you", which is a
+  wrong answer, not a safe one. Nothing extra is revealed: the call returns
+  nothing either way.
+- **Rejected:** keeping the per-channel `guild_*` drop lines in the audit log
+  (the failed call is already logged once with its status).

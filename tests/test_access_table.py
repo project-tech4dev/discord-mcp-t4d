@@ -17,6 +17,7 @@ import pytest
 from discord_mcp import audit
 from discord_mcp.config import ChannelEntry, Config, Limits
 from discord_mcp.digest import Digest
+from discord_mcp.discord_client import DiscordError
 from discord_mcp.errors import NotAMember
 from discord_mcp.permissions import MANAGE_CHANNELS, MANAGE_GUILD, MANAGE_ROLES, VIEW_CHANNEL
 from tests.fakes import GUILD_ID, NOW, OWNER, READ, FakeClient, channel, msg, user
@@ -156,12 +157,11 @@ async def test_deny_list_blocks_one_person_from_one_channel(server):
     assert await channels_with_pings(server, OWNER, deny) == set(CHANNELS)
 
 
-async def test_guild_lookup_failure_drops_every_channel_and_logs_each(server, caplog):
-    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+async def test_guild_lookup_failure_fails_the_call(server):
+    # Issue #6: an empty result would read as "nothing pings you"; fail like allow-all mode does.
     server.fail_guild = 500
-    assert await channels_with_pings(server, BOB) == set()
-    dropped = sorted(json.loads(r.getMessage())["channel_ids"][0] for r in caplog.records if "dropped" in r.getMessage())
-    assert dropped == sorted(CHANNELS.values())
+    with pytest.raises(DiscordError):
+        await channels_with_pings(server, BOB)
 
 
 async def test_unrecognised_role_drops_channel(server, caplog):
