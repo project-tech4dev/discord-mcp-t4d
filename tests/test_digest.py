@@ -807,6 +807,14 @@ async def test_search_reports_skipped_and_ignores_old_matches(client):
 # --- server-wide reads share one message budget ----------------------------------
 
 
+async def test_empty_channel_filter_means_every_channel(client):
+    # Issue #10: an empty list is "no filter", not "no channels" (which answers "no pings").
+    d = make(client, config("10"))
+    everything = (await d.get_my_pings(IDENT)).payload
+    assert sum(everything["counts"].values()) > 0
+    assert (await d.get_my_pings(IDENT, channel_ids=[])).payload["counts"] == everything["counts"]
+
+
 async def test_pings_accept_30_days(client):
     result = await make(client, config("10")).get_my_pings(IDENT, days=30)
     assert result.payload["days"] == 30
