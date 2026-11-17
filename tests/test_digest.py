@@ -871,6 +871,32 @@ async def test_handed_back_budget_continues_where_the_first_read_stopped():
     assert sum(len(cm.messages) for cm in read.fetched) <= 30
 
 
+async def test_failed_continuation_keeps_the_first_read_and_counts_as_busy(caplog):
+    # A busy channel whose second read hits Discord's rate limit still shows its first read,
+    # so it is logged as partial (not dropped) and counted in rate_limited.
+    caplog.set_level(logging.INFO, logger="discord_mcp.audit")
+    c = FakeClient()
+    c.add_channel(channel("1", "Team", 4), [])
+    for cid, n in (("10", 30), ("30", 1)):
+        c.add_channel(channel(cid, f"c{cid}", parent_id="1"), [msg(str(int(cid) * 1000 + i), cid, hours_ago=2 - i * 0.01) for i in range(n)])
+    real = c.get_messages_since
+
+    async def busy_later(channel_id, cutoff, max_count=None, before=None):
+        if before is not None:
+            raise DiscordError(429)
+        return await real(channel_id, cutoff, max_count, before)
+
+    c.get_messages_since = busy_later
+    cfg = Config(allowlist={k: ChannelEntry(k, None, 1) for k in ("10", "30")}, deny=frozenset(),
+                 limits=Limits(server_request_messages=20))
+    read = await make(c, cfg)._reader.read_server(IDENT, "get_my_pings", NOW - timedelta(days=30))
+    assert len(next(cm for cm in read.fetched if cm.channel["id"] == "10").messages) == 10
+    assert read.rate_limited == 1
+    assert read.capped is True
+    statuses = [line["status"] for line in audit_lines(caplog) if line["channel_ids"] == ["10"]]
+    assert statuses == ["dropped:partial_http_429"]
+
+
 async def test_request_budget_is_a_hard_total():
     c = _busy_server(50, 300)
     for t in range(300):

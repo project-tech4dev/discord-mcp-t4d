@@ -84,21 +84,23 @@ class Reader:
     ) -> tuple[list[ChannelMessages], list[str]]:
         """Messages per target. Returns (what was read, the failure code of each target that wasn't).
 
-        `before`: channel id -> message id to read below, to continue an earlier read.
+        `before`: channel id -> message id to read below, to continue an earlier read. A failed
+        continuation is logged as `partial_<code>`, since the earlier read is still shown.
         """
         cap = self._limits.overview_max_messages if max_count is None else max_count
         sem = asyncio.Semaphore(self._concurrency)
         before = before or {}
+        prefix = "partial_" if before else ""
 
         async def one(ch: dict, label: str) -> ChannelMessages | str:
             async with sem:
                 try:
                     newest_first = await self._client.get_messages_since(ch["id"], cutoff, cap, before.get(ch["id"]))
                 except DiscordError as e:
-                    self._access.drop(identity, tool, ch["id"], e.code)
+                    self._access.drop(identity, tool, ch["id"], prefix + e.code)
                     return e.code
                 except Exception:
-                    self._access.drop(identity, tool, ch["id"], "unexpected")
+                    self._access.drop(identity, tool, ch["id"], prefix + "unexpected")
                     return "unexpected"
             return ChannelMessages(channel=ch, label=label, messages=list(reversed(newest_first)))
 
@@ -147,12 +149,13 @@ class Reader:
         caps = {cm.channel["id"]: cap for cm in fetched}
         full = [cm for cm in fetched if len(cm.messages) >= cap]
         spare = total - sum(len(cm.messages) for cm in fetched)
+        again_failed: list[str] = []  # continuations that failed: the first read is still shown
         if full and spare > 0 and cap < lim.overview_max_messages:
             bigger = min(lim.overview_max_messages, cap + spare // len(full))
             if bigger > cap:
                 # Continue below each busy channel's oldest message, so nothing is read twice (issue #7).
                 oldest = {cm.channel["id"]: cm.messages[0]["id"] for cm in full}
-                again, _ = await self.fetch(
+                again, again_failed = await self.fetch(
                     identity, tool, [(cm.channel, cm.label) for cm in full], cutoff, bigger - cap, oldest
                 )
                 older = {cm.channel["id"]: cm.messages for cm in again}
@@ -169,7 +172,7 @@ class Reader:
             skipped=view.skipped + len(found.failed) + len(found.skipped) + len(f_failed),
             capped=dropped_threads or any(len(cm.messages) >= caps[cm.channel["id"]] for cm in fetched),
             unread=set(found.failed) | {ch["id"] for ch, _ in targets if ch["id"] not in got},
-            rate_limited=rate_limited_count([*found.failed.values(), *found.skipped, *f_failed]),
+            rate_limited=rate_limited_count([*found.failed.values(), *found.skipped, *f_failed, *again_failed]),
         )
 
     # --- one channel and its threads ----------------------------------------------
