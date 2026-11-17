@@ -79,6 +79,13 @@ real data.
      ones you don't want. Use only roles without moderation powers.
    - Never give the bot Administrator, a moderator role, or an admin role.
 4. Keep the bot's own role below every role that guards a private channel.
+5. Private threads are mostly not covered. Without Manage Threads, Discord
+   shows the bot only private threads it has joined, and only while they are
+   active. Pings in any other private thread are never seen, even by the
+   thread's members. Giving the bot Manage Threads would fix this but also
+   lets the token archive, lock and delete threads, so it is not granted (see
+   `docs/decisions.md`, issue #13). Use a private channel when the connector
+   should see the discussion.
 
 **2. Secrets in the macOS Keychain** (each command prompts you to paste the value)
 
