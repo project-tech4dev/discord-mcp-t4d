@@ -233,18 +233,22 @@ class Access:
         server's channel list and then among its active threads, both requests the bot may
         make. Only an id in neither (an archived thread, or junk) is looked up by itself.
         AccessDenied if configuration forbids its home.
+
+        A failed server-wide lookup (channel list, active threads) fails the call with
+        "Discord could not be reached", as in `view`; only the lookup of the id itself can
+        mean "not available".
         """
         active = None
-        try:
-            guild_channels = await self._client.get_guild_channels(self._guild_id)
-            meta = next((c for c in guild_channels if c.get("id") == channel_id), None)
-            if meta is None:
-                active = await self._client.get_active_threads(self._guild_id)
-                meta = next((t for t in active if t.get("id") == channel_id), None)
-            if meta is None:
+        guild_channels = await self._client.get_guild_channels(self._guild_id)
+        meta = next((c for c in guild_channels if c.get("id") == channel_id), None)
+        if meta is None:
+            active = await self._client.get_active_threads(self._guild_id)
+            meta = next((t for t in active if t.get("id") == channel_id), None)
+        if meta is None:
+            try:
                 meta = await self._client.get_channel(channel_id)
-        except DiscordError as e:
-            raise busy_or_denied([e.code]) from None
+            except DiscordError as e:
+                raise busy_or_denied([e.code]) from None
         meta = {**meta, "id": channel_id}
         home = home_id(meta)
         if not home or not self.may_read(home):
@@ -260,18 +264,19 @@ class Access:
 
         `active`: the server's active threads when this request already holds them.
 
-        A parent whose thread lookup fails is dropped completely, so a channel
-        the bot can no longer read is logged once and never half-read.
+        A parent whose archived-thread lookup fails is dropped completely, so a
+        channel the bot can no longer read is logged once and never half-read.
+        The server's active-thread list covers every channel, so if it fails
+        the whole call fails, like a failed role lookup in `view`.
         """
         parents = {p["id"]: p for p in view.visible}
         failed: dict[str, str] = {}
         found: dict[str, dict] = {}
-        try:
-            for t in active if active is not None else await self._client.get_active_threads(self._guild_id):
-                if t.get("parent_id") in parents:
-                    found[t["id"]] = t
-        except DiscordError as e:
-            failed = {pid: f"threads_{e.code}" for pid in parents}
+        # A DiscordError from the server-wide list propagates: dropping every parent would answer
+        # "nothing needs you" when Discord could not be reached.
+        for t in active if active is not None else await self._client.get_active_threads(self._guild_id):
+            if t.get("parent_id") in parents:
+                found[t["id"]] = t
         sem = asyncio.Semaphore(self._concurrency)
 
         async def archived(pid: str) -> tuple[str, list[dict] | str]:
@@ -281,7 +286,7 @@ class Access:
                 except DiscordError as e:
                     return pid, e.code
 
-        for pid, got in await asyncio.gather(*(archived(p) for p in parents if p not in failed)):
+        for pid, got in await asyncio.gather(*(archived(p) for p in parents)):
             if isinstance(got, str):
                 failed[pid] = got
             else:
