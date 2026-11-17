@@ -350,3 +350,14 @@ async def test_message_lookups_in_one_channel_share_a_bucket():
     await client.get_message("10", "2")
     await client.aclose()
     assert clock.slept == [0.5]
+
+
+@respx.mock
+async def test_messages_can_start_before_a_given_message():
+    # Issue #7: a second read continues from the oldest message of the first.
+    route = respx.get(f"{API_BASE}/channels/10/messages").mock(return_value=httpx.Response(200, json=page(50, 5, 1)))
+    client = make_client()
+    result = await client.get_messages_since("10", NOW - timedelta(days=7), max_count=5, before="51")
+    await client.aclose()
+    assert route.calls[0].request.url.params["before"] == "51"
+    assert len(result) == 5

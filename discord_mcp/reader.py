@@ -10,7 +10,7 @@ Messages live only for the request; nothing is kept.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from discord_mcp.access import Access, View
@@ -80,15 +80,20 @@ class Reader:
         targets: list[tuple[dict, str]],
         cutoff: datetime,
         max_count: int | None = None,
+        before: dict[str, str] | None = None,
     ) -> tuple[list[ChannelMessages], list[str]]:
-        """Messages per target. Returns (what was read, the failure code of each target that wasn't)."""
+        """Messages per target. Returns (what was read, the failure code of each target that wasn't).
+
+        `before`: channel id -> message id to read below, to continue an earlier read.
+        """
         cap = self._limits.overview_max_messages if max_count is None else max_count
         sem = asyncio.Semaphore(self._concurrency)
+        before = before or {}
 
         async def one(ch: dict, label: str) -> ChannelMessages | str:
             async with sem:
                 try:
-                    newest_first = await self._client.get_messages_since(ch["id"], cutoff, cap)
+                    newest_first = await self._client.get_messages_since(ch["id"], cutoff, cap, before.get(ch["id"]))
                 except DiscordError as e:
                     self._access.drop(identity, tool, ch["id"], e.code)
                     return e.code
@@ -145,10 +150,17 @@ class Reader:
         if full and spare > 0 and cap < lim.overview_max_messages:
             bigger = min(lim.overview_max_messages, cap + spare // len(full))
             if bigger > cap:
-                again, _ = await self.fetch(identity, tool, [(cm.channel, cm.label) for cm in full], cutoff, bigger)
-                more = {cm.channel["id"]: cm for cm in again}
-                fetched = [more.get(cm.channel["id"], cm) for cm in fetched]
-                caps.update({cid: bigger for cid in more})
+                # Continue below each busy channel's oldest message, so nothing is read twice (issue #7).
+                oldest = {cm.channel["id"]: cm.messages[0]["id"] for cm in full}
+                again, _ = await self.fetch(
+                    identity, tool, [(cm.channel, cm.label) for cm in full], cutoff, bigger - cap, oldest
+                )
+                older = {cm.channel["id"]: cm.messages for cm in again}
+                fetched = [
+                    replace(cm, messages=older[cid] + cm.messages) if (cid := cm.channel["id"]) in older else cm
+                    for cm in fetched
+                ]
+                caps.update({cid: bigger for cid in older})
         got = {cm.channel["id"] for cm in fetched}
         return ServerRead(
             view=view,

@@ -175,13 +175,15 @@ class DiscordClient:
         page = await self._get(f"/channels/{channel_id}/messages", {"after": "0", "limit": 1})
         return page[0] if page else None
 
-    async def get_messages_since(self, channel_id: str, cutoff: datetime, max_count: int | None = None) -> list[dict]:
+    async def get_messages_since(
+        self, channel_id: str, cutoff: datetime, max_count: int | None = None, before: str | None = None
+    ) -> list[dict]:
         """Messages at or after `cutoff`, newest first, paging backward 100 at a time.
 
-        Stops after `max_count` messages, so one request cannot page a busy channel without end.
+        Starts below message `before` when given. Stops after `max_count` messages, so one
+        request cannot page a busy channel without end.
         """
         out: list[dict] = []
-        before: str | None = None
         while True:
             params: dict[str, Any] = {"limit": PAGE_SIZE}
             if before:
