@@ -65,7 +65,8 @@ Discord does not support the registration methods MCP clients use.
 the base permissions, then the @everyone override, then all role overrides
 combined, then the member override, denies before allows at each step. A
 channel needs both View Channel and Read Message History. Threads use their
-parent's permissions, and private threads also need membership. Unrecognised
+parent's permissions, and private threads also need membership. The bot has no
+Manage Threads, so it reads only private threads it has joined, while active (#13). Unrecognised
 data counts as no access.
 
 ## What counts as a ping
