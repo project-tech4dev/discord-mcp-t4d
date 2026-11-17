@@ -150,6 +150,8 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError(f"unknown limits: {sorted(unknown)}")
     if not all(isinstance(v, int) and v > 0 for v in given.values()):
         raise ConfigError("limits must be positive integers")
+    if given.get("conversation_max_messages", 2) < 2:
+        raise ConfigError("conversation_max_messages must be at least 2 (the first message and the ping)")
     if given.get("pings_max_chars", 0) > 200000:
         raise ConfigError("pings_max_chars must be at most 200000")
 
