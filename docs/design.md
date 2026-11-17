@@ -19,6 +19,7 @@ There is no database and no message history. Messages exist in memory only while
 - **No stored message text.** Nothing is written to disk, logs or outside services.
 - **Minimal logs.** Each line holds only user ID, tool name, channel IDs, item count, duration and status. Every other logger is silenced, and errors are reported by type only.
 - **Fail closed.** A channel that fails any lookup, returns 403, or has an unrecognised type is dropped from the result and its ID is logged.
+  If the server's own roles or channel list cannot be read, no channel can be checked, so the whole call fails ("Discord could not be reached") rather than returning an empty result.
 - **Two gates.** A channel must be permitted by configuration and visible to the person under Discord's permission rules.
   Configuration is either the allowlist (default) or, with `allow_all_channels = true`, every text,
   announcement and forum channel. Either way the channel deny list wins: a denied channel, any channel

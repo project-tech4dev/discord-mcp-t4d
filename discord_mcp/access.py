@@ -169,15 +169,9 @@ class Access:
             channels = {c["id"]: c for c in guild_channels}
             role_names = {r["id"]: r["name"] for r in roles if r["id"] != self._guild_id}
         except Exception as e:
-            if allow_all:
-                # With no fixed channel list there is nothing to report as skipped, and an
-                # empty result would look like "nothing needs you". Fail the call instead.
-                raise e if isinstance(e, DiscordError) else DiscordError(None) from None
-            code = f"guild_{e.code}" if isinstance(e, DiscordError) else "guild_unexpected"
-            for cid in ids:
-                self.drop(identity, tool, cid, code)
-            empty = GuildSnapshot(self._guild_id, "", {})
-            return View(empty, {}, {}, {}, [], len(ids))
+            # Without the server's roles and channels no channel can be checked, and an empty
+            # result would read as "nothing needs you". Fail the call instead, in both modes (#6).
+            raise e if isinstance(e, DiscordError) else DiscordError(None) from None
 
         if allow_all:
             # Every channel that can hold messages; unreadable or denied ones are skipped quietly,
