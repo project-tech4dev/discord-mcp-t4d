@@ -226,3 +226,29 @@ def test_pings_max_chars_has_a_ceiling(tmp_path):
     p.write_text("[limits]\npings_max_chars = 5000000\n")
     with pytest.raises(ConfigError, match="pings_max_chars"):
         load_config(p)
+
+
+def test_allowed_roles_default_to_everyone(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("allowlist = []\n")
+    assert load_config(p).allowed_roles == frozenset()
+
+
+def test_allowed_roles_load(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('allowed_roles = ["501", "502"]\nallowlist = []\n')
+    assert load_config(p).allowed_roles == frozenset({"501", "502"})
+
+
+@pytest.mark.parametrize("value", ['"501"', "[501]", '["team"]', '[{ id = "501" }]'])
+def test_allowed_roles_reject_bad_values(tmp_path, value):
+    p = tmp_path / "c.toml"
+    p.write_text(f"allowed_roles = {value}\nallowlist = []\n")
+    with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_calls_per_minute_has_a_default(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("allowlist = []\n")
+    assert load_config(p).limits.calls_per_minute == 30

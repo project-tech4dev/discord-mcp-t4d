@@ -20,7 +20,7 @@ from datetime import datetime
 from discord_mcp import audit
 from discord_mcp.config import Config
 from discord_mcp.discord_client import DiscordError
-from discord_mcp.errors import NotAMember, busy_or_denied, not_available
+from discord_mcp.errors import NotAMember, RoleNotAllowed, busy_or_denied, not_available
 from discord_mcp.matching import Identity
 from discord_mcp.messages import PRIVATE_THREAD, READABLE_TYPES, THREAD_TYPES, home_id, snowflake_time
 from discord_mcp.permissions import GuildSnapshot, can_read
@@ -36,6 +36,16 @@ class View:
     readable_names: dict[str, str]  # names of channels this person can read, for <#id> mentions
     visible: list[dict]  # permitted channels the person can read
     skipped: int
+
+
+@dataclass
+class Located:
+    """Where a link's channel id lives, found without asking Discord about that id when possible."""
+
+    meta: dict  # the channel or thread itself (structure only)
+    home: str  # the channel itself, or a thread's parent
+    guild_channels: list[dict]  # the server's channel list, reused by view()
+    active_threads: list[dict] | None = None  # the server's active threads, if home_of read them
 
 
 @dataclass
@@ -65,7 +75,11 @@ class Access:
             if e.status == 404:
                 raise NotAMember("not a member of the server") from None
             raise
-        return Identity(user_id=user_id, role_ids=frozenset(member.get("roles", [])))
+        roles = frozenset(member.get("roles", []))
+        allowed = self._config.allowed_roles
+        if allowed and not roles & allowed:
+            raise RoleNotAllowed("no allowed role")
+        return Identity(user_id=user_id, role_ids=roles)
 
     async def _bot_identity(self) -> Identity | None:
         """The bot's own roles, to skip channels the bot cannot read before asking Discord.
@@ -128,14 +142,23 @@ class Access:
 
     # --- channels -----------------------------------------------------------
 
-    async def view(self, identity: Identity, tool: str, wanted: list[str] | None) -> View:
+    async def view(
+        self, identity: Identity, tool: str, wanted: list[str] | None, *, guild_channels: list[dict] | None = None
+    ) -> View:
+        """`guild_channels`: the server's channel list when this request already holds it."""
         allow_all = self._config.allow_all_channels
         ids = [c for c in self._config.allowlist if wanted is None or c in wanted]
+
+        async def channel_list() -> list[dict]:
+            if guild_channels is not None:
+                return guild_channels
+            return await self._client.get_guild_channels(self._guild_id)
+
         try:
             guild_info, roles, guild_channels, bot = await asyncio.gather(
                 self._client.get_guild(self._guild_id),
                 self._client.get_guild_roles(self._guild_id),
-                self._client.get_guild_channels(self._guild_id),
+                channel_list(),
                 self._bot_identity(),
             )
             snapshot = GuildSnapshot(
@@ -208,24 +231,40 @@ class Access:
             raise not_available()
         return view
 
-    async def home_of(self, channel_id: str) -> str:
+    async def home_of(self, channel_id: str) -> Located:
         """The permitted channel a link's channel lives in (itself, or a thread's parent).
 
-        One lookup of that channel only; AccessDenied if configuration forbids its home.
+        Any id from a link is untrusted, and Discord counts every refused request toward
+        the bot's invalid-request limit (issue #4). So the id is first looked for in the
+        server's channel list and then among its active threads, both requests the bot may
+        make. Only an id in neither (an archived thread, or junk) is looked up by itself.
+        AccessDenied if configuration forbids its home.
         """
+        active = None
         try:
-            meta = await self._client.get_channel(channel_id)
+            guild_channels = await self._client.get_guild_channels(self._guild_id)
+            meta = next((c for c in guild_channels if c.get("id") == channel_id), None)
+            if meta is None:
+                active = await self._client.get_active_threads(self._guild_id)
+                meta = next((t for t in active if t.get("id") == channel_id), None)
+            if meta is None:
+                meta = await self._client.get_channel(channel_id)
         except DiscordError as e:
             raise busy_or_denied([e.code]) from None
-        home = home_id({**meta, "id": channel_id})
+        meta = {**meta, "id": channel_id}
+        home = home_id(meta)
         if not home or not self.may_read(home):
             raise not_available()
-        return home
+        return Located(meta, home, guild_channels, active)
 
     # --- threads ------------------------------------------------------------
 
-    async def threads(self, identity: Identity, tool: str, view: View, cutoff: datetime) -> Threads:
+    async def threads(
+        self, identity: Identity, tool: str, view: View, cutoff: datetime, *, active: list[dict] | None = None
+    ) -> Threads:
         """Readable threads under visible parents, active since `cutoff`.
+
+        `active`: the server's active threads when this request already holds them.
 
         A parent whose thread lookup fails is dropped completely, so a channel
         the bot can no longer read is logged once and never half-read.
@@ -234,7 +273,7 @@ class Access:
         failed: dict[str, str] = {}
         found: dict[str, dict] = {}
         try:
-            for t in await self._client.get_active_threads(self._guild_id):
+            for t in active if active is not None else await self._client.get_active_threads(self._guild_id):
                 if t.get("parent_id") in parents:
                     found[t["id"]] = t
         except DiscordError as e:
@@ -296,20 +335,20 @@ class Access:
         return Threads(threads, failed, skipped)
 
     async def one_thread(
-        self, identity: Identity, tool: str, thread_id: str, cutoff: datetime
+        self, identity: Identity, tool: str, thread_id: str, cutoff: datetime, located: Located | None = None
     ) -> tuple[View, dict, dict]:
-        """(view, parent, thread) for one readable thread, checked without fetching any messages."""
-        try:
-            meta = await self._client.get_channel(thread_id)
-        except DiscordError as e:
-            raise busy_or_denied([e.code]) from None
-        parent_id = meta.get("parent_id")
-        if meta.get("type") not in THREAD_TYPES or not self.may_read(parent_id) or thread_id in self._config.deny_channels:
+        """(view, parent, thread) for one readable thread, checked without fetching any messages.
+
+        `located`: what home_of already found for this id, so it is not looked up twice.
+        """
+        loc = located or await self.home_of(thread_id)
+        if loc.meta.get("type") not in THREAD_TYPES or thread_id in self._config.deny_channels:
             raise not_available()
-        view = await self.view(identity, tool, [parent_id])
+        parent_id = loc.home
+        view = await self.view(identity, tool, [parent_id], guild_channels=loc.guild_channels)
         if not view.visible:
             raise not_available()
-        found = await self.threads(identity, tool, view, cutoff)
+        found = await self.threads(identity, tool, view, cutoff, active=loc.active_threads)
         thread = next((t for t in found.threads if t["id"] == thread_id), None)
         if thread is None:
             raise busy_or_denied(found.failed.values())

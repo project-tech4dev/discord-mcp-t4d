@@ -1020,3 +1020,119 @@ async def test_rate_limited_private_thread_lookup_is_counted(client):
     client.fail["16"] = 429
     payload = (await make(client, config("10")).get_my_pings(IDENT)).payload
     assert payload["rate_limited_channels"] == 1
+
+
+# --- issue #4: a link never makes the bot ask Discord about a channel it must not read -----------
+
+from discord_mcp.errors import AccessDenied  # noqa: E402
+
+
+def no_channel_lookups(client: FakeClient) -> bool:
+    return not any(c.startswith("channel:") for c in client.calls)
+
+
+@pytest.mark.parametrize("link", [f"{LINK}/20/200", "20/200"])
+async def test_link_to_a_channel_off_the_allowlist_is_refused_without_a_lookup(client, link):
+    with pytest.raises(AccessDenied):
+        await make(client, config("10")).get_conversation(IDENT, link)
+    assert no_channel_lookups(client)
+    assert not any(c.startswith(("messages:", "archived:")) for c in client.calls)
+
+
+async def test_link_to_a_denied_channel_is_refused_without_a_lookup(client):
+    with pytest.raises(AccessDenied):
+        await make(client, allow_all("20")).get_conversation(IDENT, "20/200")
+    assert no_channel_lookups(client)
+
+
+async def test_link_to_a_channel_the_bot_cannot_read_is_refused_without_a_lookup(client):
+    client.add_channel(bot_blocked_channel(), [msg("300", "30", mentions=[user(ME)], hours_ago=2)])
+    bot_member(client)
+    with pytest.raises(AccessDenied):
+        await make(client, allow_all()).get_conversation(IDENT, f"{LINK}/30/300")
+    assert no_channel_lookups(client)
+    assert "messages:30" not in client.calls
+
+
+async def test_link_into_an_active_thread_opens_without_a_lookup(client):
+    overview_client(client)
+    p = (await make(client, config("10")).get_conversation(IDENT, f"{LINK}/40/401")).payload
+    assert p["id"] == "t:40"
+    assert no_channel_lookups(client)
+
+
+async def test_thread_topic_id_opens_without_a_lookup(client):
+    overview_client(client)
+    p = (await make(client, config("10")).get_conversation(IDENT, "t:40")).payload
+    assert p["id"] == "t:40"
+    assert no_channel_lookups(client)
+
+
+async def test_active_thread_under_a_channel_off_the_allowlist_is_refused_without_a_lookup(client):
+    t = channel("45", "hidden plan", 11, parent_id="20", thread_metadata={"archived": False})
+    client.add_channel(t, [msg("451", "45", OTHER, "x", hours_ago=1)])
+    client.active_threads = [t]
+    with pytest.raises(AccessDenied):
+        await make(client, config("10")).get_conversation(IDENT, "45/451")
+    assert no_channel_lookups(client)
+    assert "messages:45" not in client.calls
+
+
+async def test_archived_thread_link_still_opens_by_looking_it_up_once(client):
+    sent = int((NOW.timestamp() - 480 * 3600) * 1000) - 1420070400000
+    t = channel("44", "quiet", 11, parent_id="10", thread_metadata={"archived": True}, last_message_id=str(sent << 22))
+    client.add_channel(t, [msg("441", "44", OTHER, "waiting on the draft", hours_ago=480)])
+    client.archived_threads["10"] = [t]
+    p = (await make(client, config("10")).get_conversation(IDENT, "44/441")).payload
+    assert p["id"] == "t:44"
+    assert [c for c in client.calls if c.startswith("channel:")] == ["channel:44"]
+
+
+# --- allowed_roles: only members holding one of these roles may use the server --------------------
+
+from discord_mcp.errors import NotAMember, RoleNotAllowed  # noqa: E402
+from tests.fakes import ROLE_OPS  # noqa: E402
+
+
+async def test_member_without_an_allowed_role_is_refused(client):
+    cfg = Config(allowlist={}, deny=frozenset(), allowed_roles=frozenset({ROLE_OPS}))
+    with pytest.raises(RoleNotAllowed) as e:
+        await make(client, cfg).resolve_identity(ME)
+    assert isinstance(e.value, NotAMember)  # sign-in and every call refuse it like a non-member
+
+
+async def test_member_with_an_allowed_role_is_let_in(client):
+    cfg = Config(allowlist={}, deny=frozenset(), allowed_roles=frozenset({ROLE_OPS, ROLE_DEV}))
+    ident = await make(client, cfg).resolve_identity(ME)
+    assert ident.user_id == ME
+
+
+async def test_no_allowed_roles_lets_every_member_in(client):
+    client.members[ME]["roles"] = []
+    assert (await make(client, config()).resolve_identity(ME)).user_id == ME
+
+
+async def test_link_to_a_channel_the_person_cannot_see_is_refused_without_a_lookup(client):
+    from discord_mcp.permissions import READ_MESSAGE_HISTORY, VIEW_CHANNEL
+
+    read = str(VIEW_CHANNEL | READ_MESSAGE_HISTORY)
+    hidden = channel("31", "ops-only", permission_overwrites=[{"id": GUILD_ID, "type": 0, "allow": "0", "deny": read}])
+    client.add_channel(hidden, [msg("310", "31", hours_ago=1)])
+    with pytest.raises(AccessDenied):
+        await make(client, allow_all()).get_conversation(IDENT, "31/310")
+    assert no_channel_lookups(client)
+    assert "messages:31" not in client.calls
+
+
+async def test_active_thread_link_reads_the_active_thread_list_once(client):
+    overview_client(client)
+    calls = []
+    real = client.get_active_threads
+
+    async def counted(guild_id):
+        calls.append(guild_id)
+        return await real(guild_id)
+
+    client.get_active_threads = counted
+    await make(client, config("10")).get_conversation(IDENT, "t:40")
+    assert len(calls) == 1

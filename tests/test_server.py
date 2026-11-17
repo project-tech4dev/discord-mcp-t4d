@@ -22,7 +22,7 @@ def logs():
     restore()
 
 
-def make_digest() -> Digest:
+def make_digest(limits: Limits | None = None) -> Digest:
     c = FakeClient()
     c.add_channel(
         channel("10", "general"),
@@ -31,7 +31,7 @@ def make_digest() -> Digest:
             msg("101", "10", content=f"reply {SENTINEL}", hours_ago=4),
         ],
     )
-    cfg = Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=Limits())
+    cfg = Config(allowlist={"10": ChannelEntry("10", None, 1)}, deny=frozenset(), limits=limits or Limits())
     return Digest(c, guild_id=GUILD_ID, config=cfg, clock=lambda: NOW)
 
 
@@ -263,3 +263,81 @@ async def test_audit_item_count_comes_from_the_tool_result(logs):
         await client.call_tool("list_my_channels", {})
     line = json.loads(logs.getvalue().strip().splitlines()[-1])
     assert line["item_count"] == 3
+
+
+async def test_calls_over_the_per_minute_limit_are_refused_with_fixed_text(logs):
+    d = make_digest(Limits(calls_per_minute=2))
+    async with Client(build_server(d, me)) as client:
+        assert not (await client.call_tool("list_my_channels", {})).is_error
+        assert not (await client.call_tool("list_my_channels", {})).is_error
+        third = await client.call_tool("list_my_channels", {})
+    assert third.is_error
+    assert third.content[0].text.endswith("Too many requests. Try again in a minute.")
+    assert json.loads(logs.getvalue().splitlines()[-1])["status"] == "error:RateLimited"
+
+
+async def test_the_call_limit_is_per_person(logs):
+    d = make_digest(Limits(calls_per_minute=1))
+    who = iter([ME, "1002"])
+
+    async def next_person() -> Identity:
+        return Identity(user_id=next(who), role_ids=frozenset({ROLE_DEV}))
+
+    async with Client(build_server(d, next_person)) as client:
+        assert not (await client.call_tool("list_my_channels", {})).is_error
+        assert not (await client.call_tool("list_my_channels", {})).is_error
+
+
+def test_call_limiter_frees_a_slot_after_a_minute():
+    from discord_mcp.server import CallLimiter
+
+    now = [0.0]
+    lim = CallLimiter(2, clock=lambda: now[0])
+    assert lim.allow("a")
+    now[0] = 30.0
+    assert lim.allow("a")
+    assert not lim.allow("a")
+    assert lim.allow("b")  # per person
+    now[0] = 59.9
+    assert not lim.allow("a")
+    now[0] = 60.1  # the call at 0 has left the window; the one at 30 has not
+    assert lim.allow("a")
+    assert not lim.allow("a")
+
+
+async def test_a_refused_call_makes_no_member_lookup(logs):
+    # The person is known from the sign-in token, so the limit is checked before the bot asks Discord.
+    lookups = []
+
+    async def looked_up() -> Identity:
+        lookups.append(1)
+        return await me()
+
+    server = build_server(make_digest(Limits(calls_per_minute=1)), looked_up, subject=lambda: ME)
+    async with Client(server) as client:
+        assert not (await client.call_tool("list_my_channels", {})).is_error
+        assert (await client.call_tool("list_my_channels", {})).is_error
+    assert len(lookups) == 1
+    last = json.loads(logs.getvalue().splitlines()[-1])
+    assert (last["status"], last["user_id"]) == ("error:RateLimited", ME)
+
+
+async def test_member_without_an_allowed_role_gets_its_own_fixed_text(logs):
+    from discord_mcp.errors import RoleNotAllowed
+
+    async def no_role() -> Identity:
+        raise RoleNotAllowed("no allowed role")
+
+    async with Client(build_server(make_digest(), no_role)) as client:
+        result = await client.call_tool("list_my_channels", {})
+    assert result.is_error
+    assert result.content[0].text.endswith("Your Discord account does not have a role allowed to use this server.")
+    assert json.loads(logs.getvalue().splitlines()[-1])["status"] == "error:RoleNotAllowed"
+
+
+def test_call_limiter_survives_a_zero_limit():
+    from discord_mcp.server import CallLimiter
+
+    lim = CallLimiter(0, clock=lambda: 0.0)
+    assert not lim.allow("a")
+    assert not lim.allow("b")

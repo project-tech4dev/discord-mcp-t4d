@@ -7,6 +7,7 @@ as the original exception, so message content cannot leak through an error.
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -25,7 +26,7 @@ from discord_mcp.digest import (
     Digest,
     ToolResult,
 )
-from discord_mcp.errors import AccessDenied, InputError, NotAMember
+from discord_mcp.errors import AccessDenied, InputError, NotAMember, RateLimited, RoleNotAllowed
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.matching import Identity
 
@@ -74,6 +75,31 @@ INSTRUCTIONS = (
 IdentityProvider = Callable[[], Awaitable[Identity]]
 
 
+class CallLimiter:
+    """At most `per_minute` tool calls per person in any 60 seconds, kept in memory only.
+
+    Refused calls are not counted, so a client that keeps retrying gets in again a
+    minute after its earlier calls. Relies on one server process (see docs/design.md).
+    """
+
+    def __init__(self, per_minute: int, clock: Callable[[], float] = time.monotonic) -> None:
+        self._per_minute = per_minute
+        self._clock = clock
+        self._calls: dict[str, deque[float]] = {}
+
+    def allow(self, user_id: str) -> bool:
+        now = self._clock()
+        for uid in [u for u, q in self._calls.items() if not q or now - q[-1] >= 60]:
+            del self._calls[uid]  # nobody idle for a minute is remembered
+        recent = self._calls.setdefault(user_id, deque())
+        while recent and now - recent[0] >= 60:
+            recent.popleft()
+        if len(recent) >= self._per_minute:
+            return False
+        recent.append(now)
+        return True
+
+
 def build_server(
     digest: Digest,
     identity_provider: IdentityProvider,
@@ -81,22 +107,37 @@ def build_server(
     name: str = "discord-mcp",
     auth_server_provider=None,
     auth=None,
+    subject: Callable[[], str | None] | None = None,
 ) -> MCPServer:
+    """`subject`: the caller's user ID without asking Discord (from the sign-in token), so the
+    call limit is checked before the member lookup. Without it, the limit is checked after."""
     server = MCPServer(name=name, instructions=INSTRUCTIONS, auth_server_provider=auth_server_provider, auth=auth)
     lim = digest.limits  # descriptions show the limits this server enforces
+    limiter = CallLimiter(lim.calls_per_minute)
 
     async def run(tool: str, call: Callable[[Identity], Awaitable[ToolResult]]) -> dict[str, Any]:
         start = time.monotonic()
         user_id: str | None = None
         channel_ids: list[str] = []
         try:
+            known = subject() if subject else None
+            if known:
+                user_id = known
+                if not limiter.allow(known):
+                    raise RateLimited("too many calls")
             identity = await identity_provider()
             user_id = identity.user_id
+            if not known and not limiter.allow(user_id):
+                raise RateLimited("too many calls")
             result = await call(identity)
         except InputError as e:
             status, message = "error:InputError", str(e)
+        except RoleNotAllowed:
+            status, message = "error:RoleNotAllowed", "Your Discord account does not have a role allowed to use this server."
         except NotAMember:
             status, message = "error:NotAMember", "Your Discord account is not a member of this Discord server."
+        except RateLimited:
+            status, message = "error:RateLimited", "Too many requests. Try again in a minute."
         except AccessDenied:
             status, message = "error:AccessDenied", "That channel is not available to you."
         except DiscordError as e:

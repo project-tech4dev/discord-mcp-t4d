@@ -87,7 +87,7 @@ def env():
     app = build_http_app(load_settings(ENV), digest, oauth, clock=clock)
     client = TestClient(app, base_url=PUBLIC, follow_redirects=False)
     with client:
-        yield type("Env", (), {"client": client, "oauth": oauth, "discord": fake, "clock": clock})
+        yield type("Env", (), {"client": client, "oauth": oauth, "discord": fake, "clock": clock, "digest": digest})
 
 
 def pkce() -> tuple[str, str]:
@@ -228,6 +228,20 @@ def test_failed_discord_exchange_is_refused(env):
     env.oauth.fail = True
     _, challenge = pkce()
     assert start_and_callback(env.client, authorize(env.client, challenge)).status_code == 400
+
+
+def test_member_without_an_allowed_role_cannot_sign_in(env):
+    from dataclasses import replace
+
+    from tests.fakes import ROLE_OPS
+
+    access = env.digest._access
+    access._config = replace(access._config, allowed_roles=frozenset({ROLE_OPS}))
+    _, challenge = pkce()
+    cb = start_and_callback(env.client, authorize(env.client, challenge))
+    assert cb.status_code == 403
+    assert "location" not in cb.headers
+    assert "role allowed" in cb.text
 
 
 def test_non_member_cannot_sign_in(env):

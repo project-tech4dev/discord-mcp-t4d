@@ -25,6 +25,16 @@ There is no database and no message history. Messages exist in memory only while
   in a denied category, and any thread under a denied channel (or itself denied) is never read by any
   tool, for anyone. In allow-all mode, channels a person cannot see are skipped quietly and never
   counted, so results do not reveal how many hidden channels exist.
+- **Allowed roles.** With `allowed_roles` set, only members holding one of
+  those roles may sign in or call a tool; others are refused like non-members.
+- **No requests Discord will refuse.** Discord blocks a bot that makes too many
+  refused requests (401, 403, 429: 10,000 per 10 minutes). A link's channel id
+  is untrusted, so `get_conversation` first looks for it in the server's channel
+  list and then its active threads, and refuses a channel that configuration,
+  the person or the bot cannot read without asking Discord about it. Only an id
+  in neither (an archived thread, or junk) is looked up by itself. Each person
+  may make `calls_per_minute` tool calls (default 30) in any 60 seconds, counted
+  in memory and checked before any Discord request.
 - **Secrets from the environment only.**
 
 ## Sign-in
@@ -45,8 +55,8 @@ Discord does not support the registration methods MCP clients use.
   A second worker or replica refuses the first one's codes and refresh tokens,
   so sign-in breaks (it fails closed). After a restart they stop working and
   everyone signs in again (access tokens still last their hour).
-- Roles are read by the bot on every request, so losing a role or leaving the
-  server takes effect immediately.
+- Roles are read by the bot on every request, so losing a role (including an
+  allowed role) or leaving the server takes effect immediately.
 
 ## Permissions
 
