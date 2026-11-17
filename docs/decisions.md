@@ -512,3 +512,47 @@ why it was made, and what was rejected.
   with expiry, dropping the boot id. It would allow autoscaling hosts, but
   adds a stateful service to run and secure for a server with one team's
   traffic. Revisit if the host has to scale out.
+
+## 2026-11-17 — Links never make the bot ask about channels it must not read (issue #4)
+
+- **Decision:** `Access.home_of` looks for a link's channel id in the
+  server's channel list, then in its active threads, before it calls
+  `get_channel`. A channel that configuration, the deny list, the person or
+  the bot rules out is refused with the usual "not available" text and no
+  request about it. Only an id in neither list (an archived thread, or junk)
+  is looked up by itself. What it found is passed on, so `one_thread` and
+  `view` do not look the same id up again. A per-person limit of
+  `calls_per_minute` tool calls (default 30) in any 60 seconds caps the rest.
+  It is checked with the user ID from the sign-in token, before the bot
+  looks the member up, so a refused call makes no Discord request at all.
+- **Known gap:** an id in neither list is still looked up by itself. If it
+  is an archived thread (or a thread hidden from the active list) under a
+  channel the bot cannot read, Discord refuses it and that counts. The call
+  limit bounds this to 30 a minute per person, against Discord's 10,000 per
+  10 minutes. Searching every permitted channel's archived threads instead
+  was rejected as many requests on every such link.
+- **Why:** any signed-in member could repeat `get_conversation` on ids of
+  channels the bot cannot read. Each refused request counts toward Discord's
+  invalid-request limit (10,000 per 10 minutes), and past it Discord blocks
+  the bot for everyone. The `channel/message` form also skipped the
+  server-id check. The limit also bounds a looping client.
+- **Rejected:** refusing every id not on the allowlist before any lookup
+  (the allowlist holds parent channels, so thread links would stop working);
+  caching the server's structure between requests (roles and permissions
+  must stay current); a shared or persistent rate-limit store (the server
+  is one process, see issue #3, so memory is enough; a restart resets it).
+
+## 2026-11-17 — Optional role restriction (`allowed_roles`)
+
+- **Decision:** a new optional setting, `allowed_roles`, lists role IDs.
+  When it is not empty, only members holding one of them may sign in or
+  call any tool; everyone else gets fixed text saying their account lacks
+  an allowed role. It is checked with the member's roles on every call.
+  Empty (the default) keeps the old rule: every server member.
+- **Why:** the server has members outside the core team (partners,
+  guests). Channel permissions already keep them out of private channels,
+  but the team wants the connector itself to be for staff only, which is
+  simpler to reason about than relying on every channel's overrides.
+- **Rejected:** a list of user IDs (it drifts as people join and leave;
+  roles are already maintained), and an environment variable (it belongs
+  with the other access rules in the config file).

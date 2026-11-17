@@ -119,7 +119,13 @@ def build_http_app(settings: Settings, digest: Digest, discord_oauth, *, clock: 
             raise NotAMember("no signed-in person")
         return await digest.resolve_identity(token.subject)
 
-    server = build_server(digest, identity, name=settings.server_name, auth_server_provider=provider, auth=auth)
+    def subject() -> str | None:
+        token = get_access_token()
+        return token.subject if token is not None else None
+
+    server = build_server(
+        digest, identity, name=settings.server_name, auth_server_provider=provider, auth=auth, subject=subject
+    )
     server.custom_route("/oauth/start", methods=["GET"], include_in_schema=False)(provider.start)
     server.custom_route("/oauth/discord/callback", methods=["GET"], include_in_schema=False)(provider.callback)
 

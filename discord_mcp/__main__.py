@@ -66,7 +66,7 @@ def main() -> None:
     async def identity():
         return await digest.resolve_identity(dev_user_id)
 
-    server = build_server(digest, identity, name=settings.server_name)
+    server = build_server(digest, identity, name=settings.server_name, subject=lambda: dev_user_id)
     audit.configure_logging()
     server.run("stdio")
 

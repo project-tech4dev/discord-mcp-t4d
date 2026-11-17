@@ -108,6 +108,7 @@ A fuller example, once you're ready to read more of the server:
 
 ```toml
 allow_all_channels = false         # true reads every channel except deny_channels
+allowed_roles = ["ROLE_ID"]        # only members with one of these roles; [] for everyone
 deny_channels = [
   { id = "CATEGORY_OR_CHANNEL_ID", note = "leadership" },
 ]
@@ -121,6 +122,10 @@ deny = []
 - Turn on `allow_all_channels` only with the server owner's agreement, and
   deny private spaces (leadership, HR) first.
 - `deny_channels` takes channel, category or thread IDs and always wins.
+- `allowed_roles` limits who may sign in and use the tools (for example
+  staff, not partners). Leave it empty to let every server member in.
+- Each person may make `calls_per_minute` tool calls (default 30) in any
+  minute; more get "Too many requests".
 - `watch` adds words that mark a message as worth a look in the overview.
 - `pings = "direct_only"` is for broadcast channels (leave notices, social,
   job posts): @here and role pings there count as announcements, not "needs

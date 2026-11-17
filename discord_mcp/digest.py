@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from discord_mcp.access import Access
+from discord_mcp.access import Access, Located
 from discord_mcp.config import Config, Limits
 from discord_mcp.conversations import fit_budget, group_conversations, render_full, render_row
 from discord_mcp.discord_client import DiscordError
 from discord_mcp.errors import InputError, busy_or_denied, not_available, rate_limited_count
 from discord_mcp.matching import ChannelMessages, Identity, is_quiet
-from discord_mcp.messages import TEXT_TYPES, channel_name, content_messages, thread_label
+from discord_mcp.messages import TEXT_TYPES, THREAD_TYPES, channel_name, content_messages, thread_label
 from discord_mcp.reader import Reader, ServerRead
 from discord_mcp.render import render_message
 from discord_mcp.signals import Words, check_words
@@ -179,10 +179,10 @@ class Digest:
 
         cutoff = self._cutoff(self._limits.max_days)
         # Look up only the link's own channel (or a thread's parent), not every channel on the server.
-        home = await self._access.home_of(channel_id)
-        view = await self._access.view(identity, tool, [home])
+        loc = await self._access.home_of(channel_id)
+        view = await self._access.view(identity, tool, [loc.home], guild_channels=loc.guild_channels)
         visible = {c["id"]: c for c in view.visible}
-        found = await self._access.threads(identity, tool, view, cutoff)
+        found = await self._access.threads(identity, tool, view, cutoff, active=loc.active_threads)
         threads = found.threads
         readable_threads = {t["id"]: t for t in threads}
 
@@ -192,9 +192,11 @@ class Digest:
             parent = visible[channel_id]
         elif channel_id in readable_threads:
             parent = visible[readable_threads[channel_id]["parent_id"]]
-        else:
+        elif loc.meta.get("type") in THREAD_TYPES:
             # Possibly a thread quiet for longer than the ping window; this checks access itself.
-            return await self._open_thread(identity, tool, channel_id, message_id)
+            return await self._open_thread(identity, tool, channel_id, message_id, located=loc)
+        else:
+            raise not_available()  # a channel this person (or the bot) cannot read
 
         name = channel_name(parent)
         targets = [(parent, name)] if parent.get("type") in TEXT_TYPES else []
@@ -210,16 +212,22 @@ class Digest:
                 return ToolResult(payload, [cm.channel["id"] for cm in fetched], len(payload["messages"]))
         # Not part of a ping conversation: open the thread, or the main-channel stretch, holding it.
         if channel_id in readable_threads:
-            return await self._open_thread(identity, tool, channel_id, message_id)
+            return await self._open_thread(identity, tool, channel_id, message_id, located=loc)
         return await self._open_main(identity, tool, parent["id"], message_id, anchored=False)
 
     async def _open_thread(
-        self, identity: Identity, tool: str, thread_id: str, message_id: str | None = None
+        self,
+        identity: Identity,
+        tool: str,
+        thread_id: str,
+        message_id: str | None = None,
+        *,
+        located: Located | None = None,
     ) -> ToolResult:
         """One thread over the overview window, fetching only that thread and its starter."""
         days = self._limits.overview_max_days
         cutoff = self._cutoff(days)
-        view, parent, thread = await self._access.one_thread(identity, tool, thread_id, cutoff)
+        view, parent, thread = await self._access.one_thread(identity, tool, thread_id, cutoff, located)
         label = thread_label(channel_name(parent), thread)
         fetched, codes = await self._reader.fetch(identity, tool, [(thread, label)], cutoff)
         if not fetched:
