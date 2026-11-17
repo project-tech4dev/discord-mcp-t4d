@@ -83,7 +83,7 @@ max_result_chars = 40000
 # get_my_pings only. Raise it for people with very busy weeks; Claude Code then
 # needs a higher MAX_MCP_OUTPUT_TOKENS (see README).
 pings_max_chars = 40000
-conversation_max_messages = 50
+conversation_max_messages = 50  # at least 2: the first message and the ping are always kept
 row_max_pings = 5
 overview_max_days = 30
 overview_latest = 2

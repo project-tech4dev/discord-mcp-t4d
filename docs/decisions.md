@@ -568,3 +568,17 @@ why it was made, and what was rejected.
   nothing either way.
 - **Rejected:** keeping the per-channel `guild_*` drop lines in the audit log
   (the failed call is already logged once with its status).
+
+## 2026-11-17 — A failed extra read is "partial", not "dropped"
+
+- **Decision:** when a busy channel's second, budget hand-back read fails,
+  its first read stays in the result. The audit line says
+  `dropped:partial_<code>`, and a 429 counts in `rate_limited_channels` but
+  not in `skipped_channels`. `conversation_max_messages` must be at least 2,
+  since a full conversation always keeps its first message and first ping.
+- **Why:** the old `dropped:<code>` line claimed a channel was left out when
+  its messages were shown, and a refused extra read went uncounted, so
+  Claude could not say the answer was incomplete.
+- **Rejected:** discarding the first read when the second fails (it loses
+  good messages for nothing), and a new audit status kind beside `dropped`
+  (one more pattern for log readers to learn).

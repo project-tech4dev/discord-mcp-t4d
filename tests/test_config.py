@@ -252,3 +252,12 @@ def test_calls_per_minute_has_a_default(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text("allowlist = []\n")
     assert load_config(p).limits.calls_per_minute == 30
+
+
+def test_conversation_limit_holds_at_least_the_first_message_and_ping(tmp_path):
+    # A full conversation always keeps its first message and first ping, so a limit of 1
+    # could never be met.
+    p = tmp_path / "c.toml"
+    p.write_text("allowlist = []\n[limits]\nconversation_max_messages = 1\n")
+    with pytest.raises(ConfigError, match="conversation_max_messages must be at least 2"):
+        load_config(p)
