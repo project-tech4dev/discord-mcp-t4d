@@ -174,6 +174,9 @@ prints the IDs and reasons of your pings, never message text.
    ```
 5. In Claude Code, run `/mcp`, authenticate, and sign in with Discord.
 
+Run exactly one server process, always on: no replicas and no
+scale-to-zero hosting (see "Status" in `docs/design.md`).
+
 After a restart, sign-in codes and refresh tokens from before stop working,
 so Claude asks you to sign in again once its current access token (up to an
 hour) expires. A restart is not a way to cut access off immediately; changing

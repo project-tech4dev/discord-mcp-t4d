@@ -493,3 +493,22 @@ why it was made, and what was rejected.
 - **Rejected:** moving `RenderContext` out of `matching.py` (it is shared
   by every view and has no better home yet), and counting deadlines as well
   as channels in get_server_overview's item_count (kept as it was).
+
+## 2026-11-17 — One always-on process is a deployment requirement (issue #3)
+
+- **Decision:** the server runs as exactly one always-on process. The
+  Stage 3 host must be a single VM, or one container or machine with a
+  minimum and maximum of 1 instance. `uvicorn_config` also pins `workers=1`
+  (a guard; see below). Written into the Status
+  section of `docs/design.md` and the README.
+- **Why:** used codes and refresh tokens are remembered in memory
+  (`ReplayGuard`), and codes and refresh tokens carry the process's boot id.
+  With replicas, a code issued by one instance is refused by another (each
+  has its own boot id, so this fails closed but breaks sign-in); with
+  scale-to-zero, everyone has to sign in again after each cold start. `uvicorn.Server.run()`
+  already runs one process, so `workers=1` guards a future switch to
+  `uvicorn.run()`. One process keeps the "no token database" guarantee.
+- **Rejected:** a shared store (Redis, SQLite or Postgres) for used `jti`s
+  with expiry, dropping the boot id. It would allow autoscaling hosts, but
+  adds a stateful service to run and secure for a server with one team's
+  traffic. Revisit if the host has to scale out.
