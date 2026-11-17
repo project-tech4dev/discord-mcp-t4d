@@ -121,7 +121,8 @@ class Digest:
     ) -> ToolResult:
         tool = "get_my_pings"
         days = _window(days, self._limits.default_days, self._limits.max_days, "days")
-        read = await self._reader.read_server(identity, tool, self._cutoff(days), channel_ids)
+        # An empty filter means "no filter", never "no channels" (issue #10).
+        read = await self._reader.read_server(identity, tool, self._cutoff(days), channel_ids or None)
         ctx = read.ctx
         rows = [render_row(c, identity, ctx) for c in group_conversations(read.fetched, identity, ctx)]
         payload = fit_budget(
