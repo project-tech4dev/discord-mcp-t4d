@@ -258,7 +258,7 @@ def build_server(
             "one entry per active channel (message, topic and people counts, up to "
             f"{lim.brief_topics_per_channel} top topics, signals "
             "first). deadlines: messages with deadline wording (by, due, before, EOD...) whose date falls "
-            "from today to today + upcoming_days, read from the last deadline_days; leave and social "
+            "from today to today + upcoming_days, read from the last deadline_days; broadcast "
             f"(direct_only) channels are not scanned. days defaults to {SERVER_DEFAULT_DAYS} (maximum "
             f"{lim.overview_max_days}), deadline_days to {lim.overview_max_days}, upcoming_days to "
             f"{UPCOMING_DEFAULT_DAYS} (maximum {UPCOMING_MAX_DAYS}). Open any topic id with get_conversation." + UNTRUSTED

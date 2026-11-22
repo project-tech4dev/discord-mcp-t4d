@@ -18,7 +18,7 @@ why it was made, and what was rejected.
 
 ## 2026-11-15 — Pings become conversations
 
-- **Problem:** 15 pings over 14 days came to about 62K characters, which is over
+- **Problem:** two weeks of pings came to about 62K characters, which is over
   Claude Code's tool-result limit. Most of it was raw follow-ups, and in plain
   channels the "follow-up" was just the next 10 messages, whatever they were about.
 - **Decision:** There are two use cases. (1) "What still needs me, and what has
@@ -53,8 +53,8 @@ why it was made, and what was rejected.
 
 - **Decision:** The next work covers channel and thread views for any topic,
   not just grants. It serves two people: me (my own items) and a team view
-  (for example, the partnerships person sees the whole value across the
-  `grants` channel). A server-wide view is deferred.
+  (for example, someone in a team role sees the whole value across a
+  channel). A server-wide view is deferred.
 - **Why:** Most topics (such as grants) are one thread each, sometimes with
   discussion in the main channel. Channel plus thread level is enough for now.
 
@@ -156,7 +156,7 @@ why it was made, and what was rejected.
   count as announcements. Pings that name the person, and replies to them,
   still need the person. The channel stays readable for the overview, search
   and messages, so "who is out next week?" still works.
-- **Rejected:** denying the channels (loses the leave and social questions);
+- **Rejected:** denying the channels (loses questions such as "who is out next week?");
   treating every bot message as an announcement (people post their own
   "@team I'm out" notices).
 - **Review outcomes:** a channel's category is not matched (only the channel
@@ -263,7 +263,7 @@ why it was made, and what was rejected.
   next-day reply in a new stretch isn't missed; no cache between calls, so the
   three calls each read Discord; broadcast (`direct_only`) channels are not
   scanned for deadlines.
-- **Measured** on a server of about 100 channels and threads: each call
+- **Measured** on the team's server: each call
   11-16 s, all three in parallel about 22 s; `get_server_overview(7, 30)` about 32K characters,
   `get_open_loops(30)` about 21K. `server_request_messages = 30000`.
 - **Size:** `get_my_pings` over 30 days had about 120 rows. It now shortens
@@ -309,7 +309,7 @@ why it was made, and what was rejected.
 - **Section order** (maintainer's call): pending items and promises,
   deadlines this week, nudges, then last week.
 - **Pings may go past 40K:** a new `pings_max_chars` limit (default 40K) lets
-  busy people, mostly senior leadership, get every urgent row whole; Claude
+  busy people get every urgent row whole; Claude
   Code then needs a higher `MAX_MCP_OUTPUT_TOKENS`. When rows must still be
   shortened, the least urgent are shortened first and only as far as needed,
   so `needs_you` rows keep their full text.
@@ -390,7 +390,7 @@ why it was made, and what was rejected.
     and "I will be / I'll be" on leave, on PTO, on vacation, on holiday,
     OOO, out, away, off, offline, unavailable, travelling or back.
   - Deployment config (not in the repo): channels that carry only notices,
-    such as a hiring channel, should be `pings = "direct_only"`.
+    such as an announcements channel, should be `pings = "direct_only"`.
 - **Why:** the brief's first three sections should hold what the person
   must act on. A missed real ask costs more than a noisy row, so the ask
   test is deliberately loose and a bare mention still counts.
@@ -549,8 +549,8 @@ why it was made, and what was rejected.
   call any tool; everyone else gets fixed text saying their account lacks
   an allowed role. It is checked with the member's roles on every call.
   Empty (the default) keeps the old rule: every server member.
-- **Why:** the server has members outside the core team (partners,
-  guests). Channel permissions already keep them out of private channels,
+- **Why:** the server has members outside the core team.
+  Channel permissions already keep them out of private channels,
   but the team wants the connector itself to be for staff only, which is
   simpler to reason about than relying on every channel's overrides.
 - **Rejected:** a list of user IDs (it drifts as people join and leave;
@@ -604,9 +604,7 @@ why it was made, and what was rejected.
   tool. The README says so.
 - **Why:** the earlier count of none was wrong: without the permission,
   Discord hides private threads from the bot. Measured briefly with the
-  permission (counts only): 4 active private threads, 35 archived (5 active
-  in the last 90 days, none in the last 30), in 9 of 27 permitted channels.
-  That is real but light use, and Manage Threads would let a leaked token
+  permission (counts only): private threads are in real but light use, and Manage Threads would let a leaked token
   archive, lock and delete threads. The code still never writes.
 - **Rejected:** keeping Manage Threads (covers active private threads with
   no code change, but a much broader permission for a read-only bot), and
@@ -642,7 +640,7 @@ why it was made, and what was rejected.
   any proxy. The instance role uses a custom policy that reads the six
   parameters by exact name, decrypts only through SSM for those ARNs, and
   writes to one log group: `AmazonSSMManagedInstanceCore` would let it read
-  every SecureString in a shared account. Secrets reach the app through a
+  every SecureString in the account. Secrets reach the app through a
   read-only tmpfs file, never Compose `environment`, so they are never in
   Docker's saved config. Thread and unraisable errors now print only their
   type, like the main thread.
@@ -676,3 +674,18 @@ why it was made, and what was rejected.
   (harder to move to phase 2's image pipeline); SSH with a key pair; and
   Terraform and Actions from the start (kept as phase 2, so problems show up
   before they are automated).
+
+## 2026-11-22 — Docs made generic before the repo goes public
+
+- **Decision:** Before making the repository public, docs, examples and
+  issue comments no longer describe the real server's setup: the example
+  channel config and watch words are invented, broadcast channels are not
+  named, server sizes and ping counts are given only qualitatively, roles
+  are not tied to people, and the account is not called shared. The weekly
+  reboot window is now Sunday 03:00 UTC instead of a named team time zone.
+- **Why:** each detail was harmless alone, but together they described the
+  real channel roster, server size and one person's workload. Earlier git
+  history and issue edit history still hold the old wording; that was
+  judged acceptable.
+- **Rejected:** rewriting git history (the old text is low risk, and PR refs
+  can't be rewritten anyway).

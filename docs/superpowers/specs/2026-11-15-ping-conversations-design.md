@@ -5,7 +5,7 @@ Date: 2026-11-15 · Status: draft for review
 ## Why
 
 `get_my_pings` returns each ping with up to 10 raw follow-up messages. In the
-first live test, 15 pings over 14 days came to about 62,000 characters. That
+first live test, two weeks of pings came to about 62,000 characters. That
 is over Claude Code's limit for a tool result, and it uses up the context
 Claude needs to summarise across the server. A power user gets about 20 pings
 a day (replies to their messages count as pings), so roughly 140 a week.
@@ -27,8 +27,8 @@ The ping data is there to answer three questions per ping:
 3. Did anything change after that? (was I asked again)
 
 The server can answer most of 2 and 3 itself, more cheaply than Claude
-reading raw messages. In the test data, 13 of 15 pings already had a reply
-from the person, and the 15 pings formed about 6–7 conversations.
+reading raw messages. In the test data, most pings already had a reply
+from the person, and they formed a handful of conversations.
 
 ## Use cases
 
@@ -46,7 +46,7 @@ from the person, and the 15 pings formed about 6–7 conversations.
 - The result has a hard size budget, so the size does not keep growing with
   how many pings someone gets.
 - A new tool opens one conversation in full.
-- Test target: the 15-ping, 14-day test case comes back well under 20,000
+- Test target: the two-week test case comes back well under 20,000
   characters, and a 140-ping week stays under the budget.
 
 ## Non-goals
@@ -285,6 +285,6 @@ README tool list.
   `max_days` (for example, Discord's `after=` parameter on the message list).
 - Edge cases in grouping, for example a reply into a conversation that has
   already ended.
-- Test structure. Add a fixture modelled on the live test data: 15 pings,
-  the 8 in the `grants` channel mostly one back-and-forth, and 2 with no
-  reply from the person.
+- Test structure. Add a made-up fixture of a busy fortnight: most
+  pings in one channel as one back-and-forth, and a couple with no reply
+  from the person.

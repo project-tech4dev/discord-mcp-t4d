@@ -154,7 +154,7 @@
   - In `tests/test_digest.py`, rewrite `test_stage1_acceptance_test_message_appears_with_right_reason` to assert `conversations[0]["status"] == "needs_you"`, `pings[0]["reason"] == "mention"`, `pings[0]["text"] == "@Me please review"`, `counts["needs_you"] == 1`, and `truncated is False`.
   - Change the other tests that read `payload["pings"]` to read `[p["link"] for c in payload["conversations"] for p in c["pings"]]`, or to count conversations.
   - Add `test_payload_has_no_follow_up_key`.
-  - Add `test_fifteen_ping_fixture_is_small`: build a fixture modelled on the live test. One channel `grants` holds 8 pings from 2 people with ME replying between them, and 4 threads hold 1–3 pings each, 2 of them with no ME reply. Assert there are exactly 2 `needs_you` rows and `len(json.dumps(payload)) < 20000`.
+  - Add `test_fifteen_ping_fixture_is_small`: build a made-up fixture of a busy fortnight. One channel holds 8 pings from 2 people with ME replying between them, and 4 threads hold 1–3 pings each, 2 of them with no ME reply. Assert there are exactly 2 `needs_you` rows and `len(json.dumps(payload)) < 20000`.
   - In `tests/test_matching.py`, delete the `find_pings` tests. Keep the `ping_reason` and `render_message` tests.
   - In `tests/test_server.py`, update any `pings` expectations, and assert that the audit `item_count` equals the number of conversations.
 

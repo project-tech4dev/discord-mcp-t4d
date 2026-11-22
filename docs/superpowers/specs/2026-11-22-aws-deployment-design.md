@@ -147,8 +147,8 @@ console path.
 
 1. **IAM role `discord-mcp-instance`** with an instance profile. It has a
    custom policy, **not** `AmazonSSMManagedInstanceCore`, which grants
-   `ssm:GetParameter*` on `*` and would let the instance read other teams'
-   SecureStrings in a shared account. The policy allows:
+   `ssm:GetParameter*` on `*` and would let the instance read every
+   SecureString in the account. The policy allows:
    - only what the SSM agent needs (`ssm:UpdateInstanceInformation`,
      `ssmmessages:*`, `ec2messages:*`, and similar)
    - `ssm:GetParameter(s)` on `parameter/discord-mcp/*`, plus `kms:Decrypt`
@@ -236,7 +236,7 @@ parameter value and never uses `set -x`.
    - `unattended-upgrades` for security updates.
    - `Automatic-Reboot "true"` with `Automatic-Reboot-Time "03:00"`, so a
      needed reboot happens only then. The script sets a systemd timer, or
-     the time zone, so the reboot lands on Sunday in the team's time zone,
+     the time zone, so the reboot lands on Sunday at a fixed time,
      unless the team prefers any night.
 4. **Code:**
    - `git fetch` in `/opt/discord-mcp/src`, then check out the requested ref
@@ -566,7 +566,7 @@ established these points:
 - **AWS login:** OIDC roles trust only
   `repo:<org>/<repo>:environment:<name>`. Actions are pinned to SHAs.
 - **Questions to answer then:**
-  - The shared account's rules: SCPs, permission boundaries, tags, regions,
+  - The account's rules: SCPs, permission boundaries, tags, regions,
     an existing OIDC provider.
   - Whether the person who starts a deploy may approve it.
 
