@@ -1,0 +1,10 @@
+# Allowlist: the build context holds only what the image needs. Secrets
+# (.env*, config.local.toml), PRD*, .superpowers, .venv, .git, tests and
+# deploy/.remote.local can never reach the image, because nothing is sent
+# unless it is named below.
+*
+!requirements.txt
+!discord_mcp/
+!deploy/entrypoint.sh
+**/__pycache__
+**/*.pyc

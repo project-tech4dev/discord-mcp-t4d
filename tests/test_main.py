@@ -39,3 +39,24 @@ def test_uvicorn_runs_one_worker_even_if_the_environment_asks_for_more(monkeypat
     monkeypatch.setenv("WEB_CONCURRENCY", "4")
     cfg = uvicorn_config(dummy_app, load_settings(ENV))
     assert cfg.workers == 1
+
+
+def test_main_installs_the_type_only_hooks_before_anything_else(monkeypatch):
+    import sys
+    import threading
+
+    from discord_mcp import __main__ as entry
+
+    for mod, name in ((sys, "excepthook"), (sys, "unraisablehook"), (threading, "excepthook")):
+        monkeypatch.setattr(mod, name, getattr(mod, name))
+    monkeypatch.setattr(entry, "load_settings", lambda: (_ for _ in ()).throw(entry.SettingsError("X is not set")))
+    restore = audit.configure_logging(io.StringIO())
+    try:
+        try:
+            entry.main()
+        except SystemExit:
+            pass
+    finally:
+        restore()
+    assert sys.unraisablehook is audit.safe_unraisablehook
+    assert threading.excepthook is audit.safe_threading_excepthook

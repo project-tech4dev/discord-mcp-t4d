@@ -41,7 +41,7 @@ def uvicorn_config(app, settings: Settings) -> uvicorn.Config:
 
 
 def main() -> None:
-    sys.excepthook = audit.safe_excepthook
+    audit.install_hooks()
     audit.configure_logging()
     try:
         settings = load_settings()

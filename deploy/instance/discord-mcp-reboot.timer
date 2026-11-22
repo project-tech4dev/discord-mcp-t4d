@@ -1,0 +1,11 @@
+# The only time an automatic reboot happens: Sunday 03:00 team time. Every
+# reboot signs everyone out, so unattended-upgrades never reboots by itself.
+[Unit]
+Description=Weekly reboot window for security updates
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00 Asia/Kolkata
+Persistent=false
+
+[Install]
+WantedBy=timers.target

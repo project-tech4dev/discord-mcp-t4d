@@ -1,0 +1,15 @@
+# One deploy: runs setup-instance.sh with the ref written by `remote.sh deploy`.
+# Not enabled; started on demand. Because it is a unit, a deploy keeps running
+# if the operator's laptop disconnects.
+[Unit]
+Description=Deploy discord-mcp (setup-instance.sh)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 022, not 077: git writes the checkout with this umask and the image copies
+# those modes, so a stricter one would make the code unreadable to the app.
+UMask=0022
+ExecStart=/bin/sh -c 'exec /bin/sh /opt/discord-mcp/src/deploy/setup-instance.sh "$(cat /etc/discord-mcp/deploy-ref)" >>/var/log/discord-mcp/deploy.log 2>&1'
+TimeoutStartSec=1800

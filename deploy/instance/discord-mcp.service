@@ -1,0 +1,28 @@
+# The server: fetches settings from SSM, then runs the app and Caddy containers.
+# Enabled, so it starts at boot. `systemctl restart` runs `compose down` before
+# `up`, so two copies of the app never run at once.
+[Unit]
+Description=discord-mcp (app and Caddy containers)
+# Requires, not Wants: without the metadata block the containers could get
+# the instance role's credentials, so the server must not start.
+Requires=docker.service discord-mcp-imds.service
+After=docker.service network-online.target discord-mcp-imds.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# tmpfs, mode 0700, emptied when the unit stops: secrets live only here.
+RuntimeDirectory=discord-mcp
+RuntimeDirectoryMode=0700
+UMask=0077
+ExecStartPre=/usr/local/sbin/discord-mcp-fetch-params
+ExecStart=/usr/bin/docker compose --project-directory /etc/discord-mcp -f /etc/discord-mcp/compose.yaml --env-file /run/discord-mcp/compose.env up -d --wait --remove-orphans
+# Runs on a normal stop and after a failed start, so no container is left
+# behind pointing at files that are about to be removed.
+ExecStopPost=-/usr/bin/docker compose --project-directory /etc/discord-mcp -f /etc/discord-mcp/compose.yaml --env-file /run/discord-mcp/compose.env down
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

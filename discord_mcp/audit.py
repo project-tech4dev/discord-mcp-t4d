@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import sys
+import threading
 from collections.abc import Callable, Iterable
 from typing import TextIO
 
@@ -103,3 +104,23 @@ def configure_logging(stream: TextIO | None = None) -> Callable[[], None]:
 def safe_excepthook(exc_type: type[BaseException], exc: BaseException, tb: object) -> None:
     """Uncaught errors print only their type, never their message or traceback."""
     sys.stderr.write(f"fatal: {exc_type.__name__}\n")
+
+
+def safe_threading_excepthook(args: threading.ExceptHookArgs) -> None:
+    """Uncaught errors in other threads print only their type, like safe_excepthook."""
+    if args.exc_type is SystemExit:
+        return
+    sys.stderr.write(f"fatal: {args.exc_type.__name__}\n")
+
+
+def safe_unraisablehook(unraisable: object) -> None:
+    """Errors Python cannot raise (in __del__, finalizers) print only their type."""
+    exc_type = getattr(unraisable, "exc_type", None)
+    sys.stderr.write(f"fatal: {getattr(exc_type, '__name__', 'Exception')}\n")
+
+
+def install_hooks() -> None:
+    """Make every uncaught error path print only the error type."""
+    sys.excepthook = safe_excepthook
+    sys.unraisablehook = safe_unraisablehook
+    threading.excepthook = safe_threading_excepthook

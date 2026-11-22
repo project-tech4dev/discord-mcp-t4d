@@ -1,0 +1,96 @@
+# Copied to /etc/discord-mcp/ by setup-instance.sh. Run only through
+# discord-mcp.service, which writes /run/discord-mcp/* first and passes
+# --env-file /run/discord-mcp/compose.env.
+#
+# Secrets never appear here: they are in a file mounted read-only into the app
+# and read by the entrypoint. Docker saves `environment` in its container
+# config on disk, so it holds only non-secret settings.
+name: discord-mcp
+
+services:
+  app:
+    image: discord-mcp:${IMAGE_TAG:?}
+    container_name: discord-mcp-app
+    restart: unless-stopped
+    network_mode: host          # listens on 127.0.0.1:8000 only; Caddy proxies to it
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:?}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:?}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:?}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:?}
+      OAUTH_REDIRECT_URIS: ${OAUTH_REDIRECT_URIS:-https://claude.ai/api/mcp/auth_callback}
+      SERVER_NAME: ${SERVER_NAME:-discord-mcp}
+      HOST: 127.0.0.1           # must stay loopback: forwarded_allow_ips="*" relies on it
+      PORT: "8000"
+      DIGEST_CONFIG: /run/config/config.toml
+      PYTHONWARNINGS: ignore
+    volumes:
+      - type: bind
+        source: /run/discord-mcp/secrets.env
+        target: /run/secrets/discord-mcp.env
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /run/discord-mcp/config.toml
+        target: /run/config/config.toml
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: awslogs           # audit lines only; every other logger is silenced in the app
+      options:
+        awslogs-region: ${AWS_REGION:?}
+        awslogs-group: /discord-mcp/app
+        awslogs-stream: app
+        mode: non-blocking      # a CloudWatch outage drops lines instead of stalling the app
+        max-buffer-size: 4m
+        cache-disabled: "true"  # no local copy of the lines on disk
+
+  caddy:
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    container_name: discord-mcp-caddy
+    restart: unless-stopped
+    network_mode: host          # terminates TLS on 80/443 of the instance
+    user: "10002:10002"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    # No no-new-privileges: binding 443 as non-root relies on the caddy binary's
+    # file capability, which no-new-privileges would silently disable.
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?}
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - type: bind
+        source: /etc/discord-mcp/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /var/lib/discord-mcp/caddy/data
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: /var/lib/discord-mcp/caddy/config
+        target: /config
+        bind: {create_host_path: false}
+    logging:
+      driver: local             # stays on the instance, never shipped
+      options:
+        max-size: 10m
+        max-file: "3"

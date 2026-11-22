@@ -1,0 +1,6 @@
+# The AWS profile and region remote.sh uses. Copy to deploy/.remote.local
+# (git-ignored) and replace every <...>. Never commit the filled-in copy.
+#
+#   cp deploy/examples/remote.local.example deploy/.remote.local
+AWS_PROFILE=<profile>
+AWS_REGION=<region>

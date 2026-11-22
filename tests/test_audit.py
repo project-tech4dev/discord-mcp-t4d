@@ -47,3 +47,51 @@ def test_other_loggers_are_silenced_including_exceptions(stream):
         logging.getLogger("discord_mcp").exception("boom")
     logging.getLogger().critical(SENTINEL)
     assert stream.getvalue() == ""
+
+
+# --- uncaught errors outside the main thread print only their type ----------------
+
+import gc  # noqa: E402
+import sys  # noqa: E402
+import threading  # noqa: E402
+
+PRIVATE = "PRIVATE-MESSAGE-TEXT-42"
+
+
+def test_thread_errors_print_only_the_type(monkeypatch, capsys):
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    audit.install_hooks()
+
+    def boom():
+        raise ValueError(PRIVATE)
+
+    t = threading.Thread(target=boom)
+    t.start()
+    t.join()
+    err = capsys.readouterr().err
+    assert err == "fatal: ValueError\n"
+    assert PRIVATE not in err
+
+
+def test_unraisable_errors_print_only_the_type(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "unraisablehook", sys.unraisablehook)
+    audit.install_hooks()
+
+    class Leaky:
+        def __del__(self):
+            raise RuntimeError(PRIVATE)
+
+    Leaky()
+    gc.collect()
+    err = capsys.readouterr().err
+    assert err == "fatal: RuntimeError\n"
+    assert PRIVATE not in err
+
+
+def test_install_hooks_covers_the_main_thread_too(monkeypatch):
+    for mod, name in ((sys, "excepthook"), (sys, "unraisablehook"), (threading, "excepthook")):
+        monkeypatch.setattr(mod, name, getattr(mod, name))
+    audit.install_hooks()
+    assert sys.excepthook is audit.safe_excepthook
+    assert sys.unraisablehook is audit.safe_unraisablehook
+    assert threading.excepthook is audit.safe_threading_excepthook
