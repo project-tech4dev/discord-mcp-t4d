@@ -20,15 +20,15 @@
 # Optional per-channel words that mark a message as worth a look in the
 # channel overview (2-40 characters each, at most 30). Add words over time
 # when Claude misses something:
-#   { id = "123456789012345678", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] },
+#   { id = "123456789012345678", name = "events", phase = 1, watch = ["venue", "agenda", "rsvp", "deadline"] },
 #
-# Optional `pings = "direct_only"` for broadcast channels (leave notices,
-# social channels): @here and role pings there, and in their threads, count as
+# Optional `pings = "direct_only"` for broadcast channels (announcements,
+# notice boards): @here and role pings there, and in their threads, count as
 # announcements, so only pings that name the person show as needing them. The
 # channel stays fully readable for the overview, search and messages. In
 # allowlist mode any entry, including one added only for `pings`, makes the
 # channel readable.
-#   { id = "123456789012345678", name = "leave", phase = 1, pings = "direct_only" },
+#   { id = "123456789012345678", name = "announcements", phase = 1, pings = "direct_only" },
 allowlist = []
 
 # ALLOW ALL CHANNELS (instead of the allowlist)

@@ -192,7 +192,7 @@ async def test_resolve_identity_reads_member_roles(client):
 
 
 async def test_fifteen_ping_fixture_is_small():
-    """Modelled on the first live test: 8 pings in one channel that I answered, 4 threads, 2 unanswered."""
+    """A made-up busy fortnight: 8 pings in one channel that I answered, 4 threads, 2 unanswered."""
     from tests.fakes import OTHER, THIRD
 
     c = FakeClient()

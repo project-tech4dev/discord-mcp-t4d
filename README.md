@@ -120,7 +120,7 @@ deny_channels = [
   { id = "CATEGORY_OR_CHANNEL_ID", note = "leadership" },
 ]
 allowlist = [
-  { id = "CHANNEL_ID_1", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] },
+  { id = "CHANNEL_ID_1", name = "events", phase = 1, watch = ["venue", "agenda", "rsvp", "deadline"] },
   { id = "CHANNEL_ID_2", name = "leave", phase = 1, pings = "direct_only" },
 ]
 deny = []

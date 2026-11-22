@@ -18,7 +18,7 @@ going back 30 days" or "where are we on the X proposal":
 Two people use this view:
 
 - **Me:** my items in a channel (`only_mine`).
-- **A team role**, for example the partnerships person: the whole value across
+- **A team role**, for example someone who owns a programme area: the whole value across
   a channel such as `grants`, whether or not they were pinged.
 
 Both use it in two ways: a daily or weekly briefing, and pointed questions.
@@ -60,7 +60,7 @@ cheap mechanical signals it needs, and Claude judges.
 
 - **Weakening any guarantee in `docs/design.md`**: read-only, no stored message
   text, minimal logs (search words are never logged), fail closed, and both
-  access gates. The partnerships person's "full view" is limited to what
+  access gates. A team role's "full view" is limited to what
   their own Discord roles can read.
 - **Dropping a row that has a key message** (a date, deadline or document
   link) to save space while quiet rows with nothing flagged are kept.
@@ -102,7 +102,7 @@ There are two strengths of signal:
      `sheets.google.com`, `notion.so`, `notion.site`.
 2. **Per channel, in `config.toml`:** an optional `watch` list on each
    allowlist entry, for example
-   `{ id = "...", name = "grants", phase = 1, watch = ["submit", "due", "proposal", "draft"] }`.
+   `{ id = "...", name = "events", phase = 1, watch = ["venue", "agenda", "rsvp", "deadline"] }`.
    It holds words only, never message data.
 3. **Per question, from Claude:** an optional `look_for` list on the tool call
    (at most 20 words, each 2–40 characters).
@@ -295,7 +295,7 @@ Keep the warning that message text is untrusted.
 - Both a personal view and a team view.
 - The "needs action" signals: an unanswered question or follow-up, a draft
   shared, a deadline with nothing since.
-- Words such as submit, due, proposal and draft. The word layers (built-in,
+- Channel-specific words. The word layers (built-in,
   per channel, per question) are the way to learn over time, with no
   learning on the server.
 - Approaches A and C.

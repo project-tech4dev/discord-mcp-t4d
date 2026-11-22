@@ -239,7 +239,7 @@ Deferred to the user: the refresh token replay after a restart (Medium). It need
 - [ ] **Step 3: Code review and security review (CLAUDE.md).** Get a fresh code reviewer and a fresh security reviewer on the most capable model, then fix Critical and Important findings with tests that fail first.
 - [ ] **Step 4: Scan for real data.** Run `grep` for real names and IDs over the files to be committed. Expected: no hits.
 - [ ] **Step 5: Check live.** After a server restart:
-  - `get_channel_overview(grants, days=30, look_for=[submit, due, proposal, draft])` gives a result inline, under 40K characters.
+  - `get_channel_overview(<channel>, days=30, look_for=[<a few words>])` gives a result inline, under 40K characters.
   - `search(grants, ["acme"])` finds the thread by title.
   - `get_conversation("t:<id>")` opens a thread.
 - [ ] **Step 6: Commit** with a message that lists the reviews run and what they found.

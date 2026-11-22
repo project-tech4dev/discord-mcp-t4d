@@ -319,7 +319,7 @@ Tags are never fetched, so a pushed tag can't stand in for `main`.
 - **Deploys survive a closed laptop.** The deploy is a systemd unit on the
   instance; `remote.sh status` picks it up later.
 - **Reboots:** security updates install daily. If one needs a reboot, it
-  happens on Sunday at 03:00 Asia/Kolkata, never at another time.
+  happens on Sunday at 03:00 UTC, never at another time.
 - **Docker updates are manual.** `docker.io`, `containerd` and `runc` are
   held so automatic updates never restart the server. Update them in a
   planned window (`apt-mark unhold`, upgrade, `remote.sh restart`, hold

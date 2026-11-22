@@ -76,8 +76,8 @@ Returns two sections:
   **deadline wording** (decided by the maintainer): the date sits next to a
   cue such as due, deadline, by, before, until, submit/submission, closes,
   last date, or is EOD/EOW itself. "by Friday" and "due Nov 20" count; "I'm
-  out Friday" and "event on Nov 20" don't. `direct_only` channels (leave and
-  social) are not scanned for deadlines. The list is capped (builder's
+  out Friday" and "event on Nov 20" don't. `direct_only` channels
+  (broadcast) are not scanned for deadlines. The list is capped (builder's
   number, about 50) with the rest counted in `omitted_deadlines`. Each item: `due` (YYYY-MM-DD),
   `phrase` (the matched text, e.g. "Friday", "Nov 20", "EOD"), `where`, the
   message `brief` (author, time, text, link), and the topic `id`. Sorted by
