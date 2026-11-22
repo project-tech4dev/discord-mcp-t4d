@@ -1,0 +1,13 @@
+// Copied to /etc/apt/apt.conf.d/ by setup-instance.sh.
+// Security updates install automatically. Reboots happen only in the weekly
+// window (discord-mcp-reboot.timer), never at a time unattended-upgrades picks.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Automatic-Reboot "false";
+// docker.io, containerd and runc are also held with apt-mark, so an update
+// never restarts Docker underneath the server.
+Unattended-Upgrade::Package-Blacklist {
+    "docker.io";
+    "containerd";
+    "runc";
+};

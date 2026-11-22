@@ -1,0 +1,17 @@
+# Blocks the instance metadata service for every non-root process, so neither
+# container (UIDs 10001 and 10002, host network) can get the instance role's
+# credentials. Root (Docker's awslogs driver, the SSM agent, fetch-params) still
+# can. Re-applied at every boot instead of saving the whole rule set, so
+# Docker's own rules are never persisted.
+[Unit]
+Description=Block instance metadata for non-root processes
+Before=docker.service discord-mcp.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/discord-mcp-imds-block
+
+[Install]
+WantedBy=multi-user.target

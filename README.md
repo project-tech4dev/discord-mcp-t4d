@@ -319,8 +319,22 @@ Read [CLAUDE.md](CLAUDE.md) first. In short:
 
 ## Deployment
 
-Not yet: hosting as a shared connector is stage 3, and this section will
-describe it.
+**Phase 1 (ready):** the team's shared connector runs on one EC2 instance in
+the team's AWS account, behind Caddy with a Let's Encrypt certificate.
+[`deploy/README.md`](deploy/README.md) has the checklist for creating the AWS
+resources by hand (including the instance role's IAM policy, which can read
+only the six `/discord-mcp/*` parameters), the first install, the runbook and
+every log the deployment keeps. Teammates deploy merged code with
+`deploy/remote.sh` through SSM Run Command; there is no SSH.
+
+The audit lines in CloudWatch record who called which tool on which
+channels, and when (no message text), for 30 days.
+
+**Phase 2 (planned):** Terraform and GitHub Actions, with images built in CI.
+Top-level design and open questions:
+[issue #21](https://github.com/project-tech4dev/discord-mcp-t4d/issues/21).
+
+Design: `docs/superpowers/specs/2026-11-22-aws-deployment-design.md`.
 
 ## License
 

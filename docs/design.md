@@ -193,8 +193,11 @@ Design: `docs/superpowers/specs/2026-11-15-server-wide-brief-design.md`.
 
 - Stage 1 (done): fetching, matching, tools; local stdio only.
 - Stage 2 (done): Discord sign-in and the full permission calculation.
-- Stage 3: deployment as a remote connector. **Host requirement:** one
-  always-on process: a single VM, or one container or machine with a minimum
+- Stage 3, phase 1 (built): deployment as a remote connector on one EC2
+  instance, set up by hand from `deploy/README.md`. Phase 2 (Terraform and
+  GitHub Actions) is planned in issue #21. Design:
+  `docs/superpowers/specs/2026-11-22-aws-deployment-design.md`.
+  **Host requirement:** one always-on process: a single VM, or one container or machine with a minimum
   and maximum of 1 instance. No load-balanced replicas and no scale-to-zero
   (for example Cloud Run unless min = max = 1, or serverless functions); the
   reasons are under Sign-in.

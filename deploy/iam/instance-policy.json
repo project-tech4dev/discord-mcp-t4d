@@ -1,0 +1,67 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SsmAgentCore",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:UpdateInstanceInformation",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel",
+        "ec2messages:AcknowledgeMessage",
+        "ec2messages:DeleteMessage",
+        "ec2messages:FailMessage",
+        "ec2messages:GetEndpoint",
+        "ec2messages:GetMessages",
+        "ec2messages:SendReply"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadDiscordMcpParametersOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": [
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/DISCORD_BOT_TOKEN",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/DISCORD_CLIENT_SECRET",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/OAUTH_CLIENT_SECRET",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/ENCRYPTION_KEY",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/config",
+        "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/env"
+      ]
+    },
+    {
+      "Sid": "DecryptThoseParametersViaSsmOnly",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "__SSM_KEY_ARN__",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ssm.__REGION__.amazonaws.com",
+          "kms:EncryptionContext:PARAMETER_ARN": [
+            "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/DISCORD_BOT_TOKEN",
+            "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/DISCORD_CLIENT_SECRET",
+            "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/OAUTH_CLIENT_SECRET",
+            "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/ENCRYPTION_KEY",
+            "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/config",
+            "arn:aws:ssm:__REGION__:__ACCOUNT_ID__:parameter/discord-mcp/env"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "WriteAuditLogsToOneGroup",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:__REGION__:__ACCOUNT_ID__:log-group:/discord-mcp/app:*"
+    }
+  ]
+}

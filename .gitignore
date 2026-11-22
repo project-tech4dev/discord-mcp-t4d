@@ -185,3 +185,7 @@ config.local.toml
 
 # Internal planning documents (kept out of the public repo)
 PRD*.md
+
+# Local AWS profile/region for deploy/remote.sh
+deploy/.remote.local
+!deploy/instance/

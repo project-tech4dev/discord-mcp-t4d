@@ -1,0 +1,22 @@
+# Copied to /etc/discord-mcp/ by setup-instance.sh. TLS ends here, on the
+# instance; Cloudflare stays DNS-only.
+{
+	admin off
+	servers {
+		# TCP only: the security group opens TCP 80 and 443, not UDP for HTTP/3.
+		protocols h1 h2
+	}
+	log default {
+		output stderr
+		format json
+		level INFO
+		# These write the request (URI, client IP, headers) when the upstream
+		# fails, or Go's own errors with "from <ip>:<port>".
+		exclude http.log.error http.handlers.reverse_proxy http.stdlib
+	}
+}
+
+# No site-level log directive, so there is no access log.
+{$DOMAIN} {
+	reverse_proxy 127.0.0.1:8000
+}

@@ -627,3 +627,52 @@ why it was made, and what was rejected.
 - **Rejected:** dropping only the threads and still reading the main
   channels (a half-read inbox that looks complete), and a warning field on an
   otherwise normal result (Claude may not pass it on).
+
+## 2026-11-22 — Stage 3 phase 1: one EC2 instance, set up by hand
+
+- **Decision:** host the shared connector on one `t4g.small` in the team's
+  AWS account: Docker Compose with the app and Caddy (TLS on the instance),
+  settings in six SSM SecureString parameters, and deploys of merged code
+  through SSM Run Command (`deploy/remote.sh`), with no SSH. The resources
+  are created by hand from `deploy/README.md`; Terraform and GitHub Actions
+  are phase 2 (#21). Full design:
+  `docs/superpowers/specs/2026-11-22-aws-deployment-design.md`.
+- **Why:** the server must be one always-on process, the team already has
+  the account, and an instance with TLS on it keeps message text away from
+  any proxy. The instance role uses a custom policy that reads the six
+  parameters by exact name, decrypts only through SSM for those ARNs, and
+  writes to one log group: `AmazonSSMManagedInstanceCore` would let it read
+  every SecureString in a shared account. Secrets reach the app through a
+  read-only tmpfs file, never Compose `environment`, so they are never in
+  Docker's saved config. Thread and unraisable errors now print only their
+  type, like the main thread.
+- **Built differently from the spec (choices left to the builder):**
+  - The IMDS rule is re-applied at boot by a small unit
+    (`discord-mcp-imds.service`), not `iptables-persistent`, which would
+    also save Docker's own rules.
+  - The Sunday reboot is a systemd timer that reboots only if
+    `/var/run/reboot-required` exists; unattended-upgrades never reboots
+    itself.
+  - The AWS CLI comes from the snap; the log policy's resource is the
+    log-group ARN with `:*`; the health check uses `curl --resolve` to
+    127.0.0.1 so it needs no DNS; the containers have fixed names; Caddy
+    serves HTTP/1.1 and HTTP/2 only; the code step runs before the packages
+    step so the newest script installs them; `remote.sh install` does the
+    first install.
+- **Found in review and fixed before the first deploy:** the deploy unit's
+  `UMask=0077` would have made the checkout unreadable to the app user (now
+  0022, and `chmod -R a+rX` in the image); rollback now restores the
+  previous commit's files as well as its image; a tag named `origin/main`
+  could have passed the merged-code check, so `checkout-ref.sh` fetches only
+  `main`, never tags, and uses full refs; the metadata block failed open, so
+  the server and Docker itself now `Requires=` it (Docker restarts the
+  containers on its own after an unclean stop) and `fetch-params.sh`
+  refuses to start without it; the KMS condition lists the six parameter ARNs under
+  `StringEquals`. Hash-pinned Python requirements are left as a follow-up.
+- **Rejected:** ECS Fargate (the public IP changes on every deploy, and a
+  rolling deploy briefly runs two tasks, which breaks sign-in); an ALB with
+  ACM (about $25 a month for little gain here); Cloudflare proxying (it would
+  see every response, including message text); a venv without containers
+  (harder to move to phase 2's image pipeline); SSH with a key pair; and
+  Terraform and Actions from the start (kept as phase 2, so problems show up
+  before they are automated).

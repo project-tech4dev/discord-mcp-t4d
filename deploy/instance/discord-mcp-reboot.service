@@ -1,0 +1,8 @@
+# Reboots only if an update needs it. Started by discord-mcp-reboot.timer.
+[Unit]
+Description=Reboot if a security update needs it
+ConditionPathExists=/var/run/reboot-required
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl reboot
