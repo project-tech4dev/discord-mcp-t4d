@@ -69,44 +69,57 @@ timezone = "UTC"
 date_order = "dmy"
 
 [limits]
-default_days = 7
-max_days = 30
-text_chars = 1500
-reply_chars = 200
-channel_default_days = 3
-channel_default_limit = 100
-channel_max_limit = 300
-conversation_gap_hours = 12
-conversation_max_hours = 24
-summary_chars = 200
-max_result_chars = 40000
-# get_my_pings only. Raise it for people with very busy weeks; Claude Code then
-# needs a higher MAX_MCP_OUTPUT_TOKENS (see README).
-pings_max_chars = 40000
-conversation_max_messages = 50  # at least 2: the first message and the ping are always kept
-row_max_pings = 5
-overview_max_days = 30
-overview_latest = 2
-overview_key_messages = 2
-opening_chars = 300
-main_topic_gap_hours = 24
-main_topic_max_hours = 72
-search_matches_per_topic = 5
-overview_max_messages = 3000
-overview_max_threads = 50
-overview_request_messages = 15000
-# Server-wide reads (get_my_pings, get_server_overview, get_open_loops) share one hard message
-# budget per request: each channel or thread gets an equal share (at most overview_max_messages),
-# then what quiet ones left unused goes back to the busy ones. Only the newest server_max_threads
-# threads are read; the rest set `truncated`.
-server_request_messages = 30000
-server_max_threads = 200
-# Open loops: how old your unanswered ask or your own promise (nudge_ask_days), a promise to you
-# (nudge_promise_days), or a quiet thread (nudge_stall_days) must be.
-nudge_ask_days = 1
-nudge_promise_days = 2
-nudge_stall_days = 3
-brief_topics_per_channel = 3
-brief_max_deadlines = 50
-# Tool calls one person may make in any 60 seconds.
-calls_per_minute = 30
+# Each limit below has a one-line meaning. Leave a limit out of your own
+# config file to keep the value shown here.
+
+# --- Time windows (days) ---
+default_days = 7               # days looked back when Claude does not say how far (pings, channel overview)
+max_days = 30                  # longest look-back for pings and channel messages, and for message links get_conversation opens
+channel_default_days = 3       # days looked back by get_channel_messages when not told
+overview_max_days = 30         # longest look-back for overviews, search and open loops
+
+# --- How much text each message shows (characters) ---
+text_chars = 1500              # longest message text shown in full views (pings, channel messages)
+reply_chars = 200              # length of the quoted message a reply answers
+summary_chars = 200            # message text length in compact rows (overviews, briefs, deadlines, shortened ping rows)
+opening_chars = 300            # length of a topic's first message in overview rows
+
+# --- get_channel_messages ---
+channel_default_limit = 100    # messages returned when Claude does not ask for a number
+channel_max_limit = 300        # most messages one call may return
+
+# --- Grouping pings into conversations ---
+conversation_gap_hours = 12    # silence (hours) after which the next message starts a new conversation
+conversation_max_hours = 24    # longest a conversation may run before it is split
+conversation_max_messages = 50 # most messages shown per conversation; at least 2 (first message and the ping are always kept)
+row_max_pings = 5              # most pings listed in one conversation row of get_my_pings
+
+# --- Size of one reply to Claude (characters) ---
+max_result_chars = 40000       # cap on overview, search, brief, open-loop and get_conversation replies; extra rows are shortened or dropped
+pings_max_chars = 60000        # same cap for get_my_pings, larger for busy weeks; if Claude Code refuses a result as too large, raise MAX_MCP_OUTPUT_TOKENS (see README)
+
+# --- Channel overview rows ---
+overview_latest = 2            # newest messages shown under each topic
+overview_key_messages = 2      # extra flagged messages (questions, deadlines, watch words) from the middle of a topic
+main_topic_gap_hours = 24      # in the main channel (not threads), silence that starts a new topic
+main_topic_max_hours = 72      # longest a main-channel topic may run before it is split
+search_matches_per_topic = 5   # most matching messages shown per topic in search
+
+# --- Reading budgets (messages fetched from Discord per request) ---
+overview_max_messages = 3000   # most messages read from any one channel or thread
+overview_max_threads = 50      # one-channel tools read only the newest this-many threads
+overview_request_messages = 15000  # rough message budget for one one-channel request, shared by its threads (each still gets at least 100)
+server_request_messages = 30000    # total budget for server-wide tools (pings, server overview, open loops), split across channels; unused share goes to busy ones
+server_max_threads = 200       # server-wide tools read only the newest this-many threads; the rest set `truncated`
+
+# --- Open loops: how old something must be before it is flagged (days) ---
+nudge_ask_days = 1             # your unanswered question, or your own promise
+nudge_promise_days = 2         # a promise someone made to you
+nudge_stall_days = 3           # a thread nobody has posted in
+
+# --- Server overview / brief ---
+brief_topics_per_channel = 3   # top topics listed per channel
+brief_max_deadlines = 50       # most deadlines listed
+
+# --- Abuse guard ---
+calls_per_minute = 30          # tool calls one person may make in any 60 seconds

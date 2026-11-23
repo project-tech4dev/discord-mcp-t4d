@@ -31,7 +31,7 @@ class Limits:
     summary_chars: int = 200
     max_result_chars: int = 40000
     # get_my_pings only; raise it for people with very busy weeks (see README on Claude Code's cap).
-    pings_max_chars: int = 40000
+    pings_max_chars: int = 60000
     conversation_max_messages: int = 50
     row_max_pings: int = 5
     overview_max_days: int = 30

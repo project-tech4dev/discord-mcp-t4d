@@ -111,7 +111,7 @@ other than the person (not a bot) posted after their last reply
 me" or "EOD" (`you_promised`). Check rows carry the reasons and the newest
 message after the reply in `latest`. Handled and check rows carry the
 person's last reply so Claude can judge whether it closed the matter. The
-result has a size budget (40,000 characters by default): when it is over,
+result has a size budget (`pings_max_chars`, 60,000 characters by default): when it is over,
 oldest announcements, then oldest handled rows, then oldest fyi rows are
 dropped and counted in `omitted`. `get_conversation` opens one conversation in full.
 Design: `docs/superpowers/specs/2026-11-15-ping-conversations-design.md`.
@@ -157,7 +157,7 @@ A morning or Monday brief comes from three calls Claude makes in parallel
 `get_my_pings(days=14)` for pending items, and `get_open_loops(days=30)` for
 promises and nudges. Each call reads every readable channel and thread once,
 within a per-request message budget (`server_request_messages`), and keeps
-its own 40K budget. Nothing is kept between calls.
+its own size budget (60K for `get_my_pings`, 40K for the others). Nothing is kept between calls.
 
 - **Last week:** one entry per active channel (message, topic and people
   counts) with its top 3 topics, strong signals first. Quiet channels are
@@ -181,7 +181,7 @@ its own 40K budget. Nothing is kept between calls.
   and absences ("I will not be able to", "I'll be on leave", "I'll be OOO",
   "I'll be back on Monday") are not promises.
 - **Size:** `get_my_pings` has its own budget, `pings_max_chars` (default
-  40,000, at most 200,000). When over it, announcement, handled and fyi rows go
+  60,000, at most 200,000). When over it, announcement, handled and fyi rows go
   first; then the least urgent rows are shortened, one at a time and only as
   far as needed: texts cut (row `compact: 1`), then only the newest ping
   (`compact: 2`). Rows are dropped only when every kept row is as short as it

@@ -181,6 +181,7 @@ cython_debug/
 .cursorindexingignore
 # Local-only digest config and secrets
 config.local.toml
+config.local.toml.*
 .env*.local
 
 # Internal planning documents (kept out of the public repo)
