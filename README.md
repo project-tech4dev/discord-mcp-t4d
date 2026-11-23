@@ -102,16 +102,34 @@ Generate the last two with
 repo, env files or shell history. (Claude Code and claude.ai each keep their
 own copy of the client secret once you give it to them.)
 
-**3. `config.local.toml`** (git-ignored; `config.toml` documents every setting)
+**3. `config.local.toml`** (git-ignored; `config.toml` explains every setting in a line)
 
-Start with one test channel:
+Copy `config.toml` to `config.local.toml` and edit the values you need, so
+every setting and its explanation sit in one file. Start with one test
+channel:
 
 ```toml
 allowlist = [ { id = "CHANNEL_ID_1", name = "test", phase = 1 } ]
-deny = []
 ```
 
-A fuller example, once you're ready to read more of the server:
+When `config.toml` gains a setting or new explanations, bring your copy up to
+date without losing your values:
+
+```sh
+.venv/bin/python -m scripts.sync_local_config          # rebuilds it; old copy in config.local.toml.bak
+.venv/bin/python -m scripts.sync_local_config --check  # only says whether it is out of date
+```
+
+It marks each value that differs from the default with a
+`# CUSTOM (default: ...)` line, keeps comment lines starting `# NOTE` above a
+setting, and writes nothing unless the server would load the new file exactly
+as it loads the old one. It never changes a value: a setting in your copy keeps
+its value even when the default changes later, and is then marked `CUSTOM`.
+Review the `CUSTOM` lines after each run and delete a setting to take the new
+default. Each run replaces the previous `.bak`. A short file with only the
+settings you change also works; anything left out uses the default.
+
+The values a fuller setup changes, once you're ready to read more of the server:
 
 ```toml
 allow_all_channels = false         # true reads every channel except deny_channels

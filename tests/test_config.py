@@ -228,6 +228,12 @@ def test_pings_max_chars_has_a_ceiling(tmp_path):
         load_config(p)
 
 
+def test_pings_max_chars_defaults_to_60000(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text("")
+    assert load_config(p).limits.pings_max_chars == 60000
+
+
 def test_allowed_roles_default_to_everyone(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text("allowlist = []\n")

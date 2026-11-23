@@ -689,3 +689,19 @@ why it was made, and what was rejected.
   judged acceptable.
 - **Rejected:** rewriting git history (the old text is low risk, and PR refs
   can't be rewritten anyway).
+
+## 2026-11-23 — get_my_pings budget default raised to 60,000 characters
+
+- **Decision:** `pings_max_chars` now defaults to 60,000 instead of 40,000.
+  `config.toml` now has a one-line explanation for every limit, and the
+  recommended local config is a full copy of `config.toml` with changed
+  values marked `CUSTOM`, instead of a short file holding only overrides.
+  `scripts/sync_local_config.py` rebuilds that copy when `config.toml`
+  changes, keeping the local values, and refuses to write if the server
+  would load the result differently.
+- **Why:** busy weeks were being compacted at 40,000, and the deployment
+  was already overriding it to 60,000. A full local copy shows every setting in one place
+  and makes changes from the defaults easy to spot.
+- **Rejected:** keeping 40,000 and overriding locally (the override was the
+  real setting everywhere it ran); raising `max_result_chars` for all tools
+  (only pings needed more room).
