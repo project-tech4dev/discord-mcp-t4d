@@ -705,3 +705,21 @@ why it was made, and what was rejected.
 - **Rejected:** keeping 40,000 and overriding locally (the override was the
   real setting everywhere it ran); raising `max_result_chars` for all tools
   (only pings needed more room).
+
+## 2026-11-25 — Ubuntu 26.04 and an optional dedicated VPC for the AWS instance
+
+- **Decision:** The deployment guide now launches the official Ubuntu 26.04
+  LTS arm64 AMI instead of 24.04, and adds an optional step that creates a
+  VPC of its own (one public subnet, an internet gateway, no automatic
+  public IPs) for accounts that run other workloads. The channel config
+  parameter is uploaded on the advanced tier, and the alarm command writes
+  `${AWS_REGION}` so zsh doesn't read `:e` as a modifier.
+- **Why:** 26.04 is supported until 2031 (24.04 until 2029), and the first
+  real install ran on it with no script changes. A dedicated VPC keeps the
+  instance off other workloads' private networks at no cost. A full copy of
+  `config.toml` is over the 4 KB standard-tier limit (the advanced tier
+  holds 8 KB, so a long local copy may need its comments trimmed).
+- **Rejected:** staying on 24.04 (no reason beyond the guide's age);
+  requiring a dedicated VPC (an existing public subnet is fine when the
+  account runs nothing else); documenting cost-allocation tags (they vary
+  by organisation).

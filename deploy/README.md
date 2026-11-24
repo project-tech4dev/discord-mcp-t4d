@@ -22,7 +22,7 @@ claude.ai ──HTTPS──▶ Elastic IP :443 ──▶ Caddy (TLS, Let's Encry
                                           caddy container, UID 10002     app container, UID 10001
 ```
 
-- One `t4g.small` (Ubuntu 24.04 arm64). Docker Compose runs two containers
+- One `t4g.small` (Ubuntu 26.04 arm64). Docker Compose runs two containers
   on the host network: `app` (this repo's `Dockerfile`) and `caddy`.
 - Both run as non-root with read-only root filesystems and all capabilities
   dropped. Caddy keeps only `NET_BIND_SERVICE`.
@@ -59,8 +59,14 @@ order. Each step says what it creates.
 ```sh
 export AWS_PROFILE=<profile> AWS_REGION=<region>
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-VPC_ID=<existing vpc>        # the VPC to use
-SUBNET_ID=<public subnet>    # a public subnet in it
+```
+
+To use an existing VPC, set these two. To create one of its own instead,
+skip them and run step 0b.
+
+```sh
+VPC_ID=<existing vpc>
+SUBNET_ID=<public subnet>    # a subnet in it with a route to an internet gateway
 ```
 
 Save the profile and region for `remote.sh` in the git-ignored
@@ -69,6 +75,49 @@ Save the profile and region for `remote.sh` in the git-ignored
 ```sh
 printf 'AWS_PROFILE=%s\nAWS_REGION=%s\n' "$AWS_PROFILE" "$AWS_REGION" > deploy/.remote.local
 ```
+
+In zsh, write `${AWS_REGION}` rather than `$AWS_REGION` when a `:` follows
+it: zsh reads `$AWS_REGION:e` as a modifier and mangles the text.
+
+### 0b. A dedicated VPC (recommended if the account runs other workloads)
+
+Skip this if you set `VPC_ID` and `SUBNET_ID` above. A VPC of its own keeps
+the instance off the private networks of anything else in the account: it
+has one public subnet, an internet gateway and nothing else. Pick a range
+that no other VPC in the account uses.
+
+```sh
+VPC_CIDR=10.99.0.0/24 SUBNET_CIDR=10.99.0.0/26   # example ranges
+aws ec2 describe-instance-type-offerings --location-type availability-zone \
+    --filters Name=instance-type,Values=t4g.small --query 'InstanceTypeOfferings[].Location' --output text
+AZ=${AWS_REGION}a                               # one of the zones listed above
+VPC_ID=$(aws ec2 create-vpc --cidr-block "$VPC_CIDR" \
+    --tag-specifications 'ResourceType=vpc,Tags=[{Key=Name,Value=discord-mcp}]' \
+    --query Vpc.VpcId --output text)
+aws ec2 modify-vpc-attribute --vpc-id "$VPC_ID" --enable-dns-hostnames
+SUBNET_ID=$(aws ec2 create-subnet --vpc-id "$VPC_ID" --cidr-block "$SUBNET_CIDR" \
+    --availability-zone "$AZ" \
+    --tag-specifications 'ResourceType=subnet,Tags=[{Key=Name,Value=discord-mcp}]' \
+    --query Subnet.SubnetId --output text)
+IGW_ID=$(aws ec2 create-internet-gateway \
+    --tag-specifications 'ResourceType=internet-gateway,Tags=[{Key=Name,Value=discord-mcp}]' \
+    --query InternetGateway.InternetGatewayId --output text)
+aws ec2 attach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID"
+RT_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" \
+    --tag-specifications 'ResourceType=route-table,Tags=[{Key=Name,Value=discord-mcp}]' \
+    --query RouteTable.RouteTableId --output text)
+aws ec2 create-route --route-table-id "$RT_ID" --destination-cidr-block 0.0.0.0/0 \
+    --gateway-id "$IGW_ID" >/dev/null
+aws ec2 associate-route-table --route-table-id "$RT_ID" --subnet-id "$SUBNET_ID" >/dev/null
+```
+
+The subnet gives out no public IPs automatically. The instance gets its
+address from the Elastic IP in step 7, so until then it can't reach the
+internet and the SSM agent shows offline. The subnet has no IPv6, so step 4
+needs no IPv6 rules and step 9 no AAAA record. These are free; only the
+instance, its disk and the Elastic IP cost money. The VPC's default
+security group and network ACL go unused. Replacing the instance later
+reuses all of this.
 
 ### 1. Pick the domain
 
@@ -87,7 +136,7 @@ stay out of shell history.
 | `/discord-mcp/DISCORD_CLIENT_SECRET` | Discord app secret |
 | `/discord-mcp/OAUTH_CLIENT_SECRET` | secret given to Claude (new for production) |
 | `/discord-mcp/ENCRYPTION_KEY` | 32 random bytes, base64url (new for production) |
-| `/discord-mcp/config` | contents of `config.local.toml` (advanced tier if over 4 KB) |
+| `/discord-mcp/config` | contents of `config.local.toml` (advanced tier, up to 8 KB) |
 | `/discord-mcp/env` | non-secret settings, `KEY=value` lines |
 
 The two Discord secrets, pasted when prompted:
@@ -119,10 +168,13 @@ aws ssm get-parameter --name /discord-mcp/OAUTH_CLIENT_SECRET --with-decryption 
   --query Parameter.Value --output text | pbcopy
 ```
 
-The channel config, from your local file:
+The channel config, from your local file. A full copy of `config.toml` is
+over the 4 KB standard limit, so use the advanced tier (about $0.05 a
+month). The advanced tier holds up to 8 KB; if the file gets close, delete
+the explanatory comments from your local copy (`config.toml` keeps them).
 
 ```sh
-aws ssm put-parameter --name /discord-mcp/config --type SecureString \
+aws ssm put-parameter --name /discord-mcp/config --type SecureString --tier Advanced \
     --value file://config.local.toml >/dev/null
 ```
 
@@ -211,13 +263,13 @@ which channels.
 
 ### 6. EC2 instance
 
-`t4g.small`, the official Ubuntu 24.04 arm64 AMI, no key pair, IMDSv2
+`t4g.small`, the official Ubuntu 26.04 LTS arm64 AMI, no key pair, IMDSv2
 required with hop limit 1, a 20 GB encrypted gp3 disk, termination
 protection on, and no user data.
 
 ```sh
 INSTANCE_ID=$(aws ec2 run-instances \
-    --image-id resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id \
+    --image-id resolve:ssm:/aws/service/canonical/ubuntu/server/26.04/stable/current/arm64/hvm/ebs-gp3/ami-id \
     --instance-type t4g.small --subnet-id "$SUBNET_ID" --security-group-ids "$SG_ID" \
     --iam-instance-profile Name=discord-mcp-instance \
     --metadata-options HttpEndpoint=enabled,HttpTokens=required,HttpPutResponseHopLimit=1 \
@@ -249,7 +301,7 @@ aws cloudwatch put-metric-alarm --alarm-name discord-mcp-recover \
     --dimensions Name=InstanceId,Value="$INSTANCE_ID" \
     --statistic Maximum --period 60 --evaluation-periods 2 --threshold 1 \
     --comparison-operator GreaterThanOrEqualToThreshold \
-    --alarm-actions "arn:aws:automate:$AWS_REGION:ec2:recover"
+    --alarm-actions "arn:aws:automate:${AWS_REGION}:ec2:recover"
 ```
 
 ### 9. Cloudflare DNS
@@ -271,7 +323,9 @@ aws ssm describe-instance-information \
 ```
 
 It should print `"Online"` within a few minutes. If not, check the role is
-attached and the subnet has a route to the internet.
+attached, the instance has a public address (in a dedicated VPC, only the
+Elastic IP from step 7 gives it one), and the subnet has a route to the
+internet.
 
 ### 12. First install
 
@@ -309,7 +363,7 @@ Tags are never fetched, so a pushed tag can't stand in for `main`.
 | Last deploy output | `deploy/remote.sh logs 100` |
 | Read audit lines | `aws logs tail /discord-mcp/app --since 1h` |
 | Certificate trouble | `deploy/remote.sh caddy-logs 100` |
-| Replace the instance | Steps 6–8 and 11–12 again, then move the Elastic IP. Caddy gets a new certificate |
+| Replace the instance | Stop the old one and remove its `Name` tag. Step 6, then move the existing Elastic IP: `aws ec2 associate-address --allocation-id "$ALLOC_ID" --instance-id "$INSTANCE_ID" --allow-reassociation`. Then step 8 and steps 11–12. The server is down until the install ends; Caddy gets a new certificate |
 
 - **Only merged code runs.** A deploy refuses any commit that isn't on
   `origin/main`.
@@ -339,7 +393,7 @@ Tags are never fetched, so a pushed tag can't stand in for `main`.
 - **Channels:** edit `config.local.toml`, then:
 
   ```sh
-  aws ssm put-parameter --name /discord-mcp/config --type SecureString \
+  aws ssm put-parameter --name /discord-mcp/config --type SecureString --tier Advanced \
       --overwrite --value file://config.local.toml >/dev/null
   deploy/remote.sh restart
   ```

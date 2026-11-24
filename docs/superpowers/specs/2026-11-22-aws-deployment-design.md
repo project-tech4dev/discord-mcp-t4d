@@ -161,8 +161,9 @@ console path.
    - No port 22.
    - Outbound: all.
 3. **EC2 instance:**
-   - t4g.small, Ubuntu 24.04 LTS arm64 (official Canonical AMI)
-   - existing VPC, public subnet
+   - t4g.small, Ubuntu 26.04 LTS arm64 (official Canonical AMI)
+   - an existing VPC's public subnet, or a dedicated VPC with one public
+     subnet (recommended when the account runs other workloads)
    - no key pair
    - role `discord-mcp-instance`
    - IMDSv2 required, hop limit 1
